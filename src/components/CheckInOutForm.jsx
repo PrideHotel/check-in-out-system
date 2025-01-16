@@ -12,8 +12,7 @@ import {
 } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 
-// Example: Basic function to get a textual address from latitude/longitude
-// using Nominatim (OpenStreetMap). You can swap it for Google Maps Geocoding, etc.
+// 1. Reverse Geocoding Helper (using Nominatim)
 async function reverseGeocode(lat, lon) {
   try {
     const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json`;
@@ -22,13 +21,25 @@ async function reverseGeocode(lat, lon) {
       throw new Error('Failed to fetch address');
     }
     const data = await response.json();
-    // data.display_name often contains the full address
     return data.display_name || `Lat: ${lat}, Lon: ${lon}`;
   } catch (error) {
     console.error('Reverse geocoding error:', error);
-    // Fallback to lat/long if something fails
     return `Lat: ${lat}, Lon: ${lon}`;
   }
+}
+
+// 2. Consistent Date/Time Formatter (24-hour format)
+// Example format: "2023-08-23 14:35:12"
+function getFormattedDateTime() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  const hours = String(now.getHours()).padStart(2, '0');   // 24-hour
+  const minutes = String(now.getMinutes()).padStart(2, '0');
+  const seconds = String(now.getSeconds()).padStart(2, '0');
+
+  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
 }
 
 const CheckInOutForm = () => {
@@ -42,9 +53,8 @@ const CheckInOutForm = () => {
     checkOutTime: '',
   });
 
-  // We’ll store addresses in Firestore fields:
-  // - checkInAdd  (Check-in Address)
-  // - checkOutAdd (Check-out Address)
+  // Additional fields: checkInAdd, checkOutAdd will be stored in Firestore
+  // to track the actual addresses.
 
   const locations = [
     'Ambaji',
@@ -63,12 +73,10 @@ const CheckInOutForm = () => {
   const [currentDocId, setCurrentDocId] = useState(null);
   const [showMessage, setShowMessage] = useState('');
 
-  // On mount, check if user has an active check-in
   useEffect(() => {
     checkExistingCheckIn();
   }, []);
 
-  // If user has a displayName in Auth, auto-fill the name
   useEffect(() => {
     if (auth.currentUser && auth.currentUser.displayName) {
       setFormData((prev) => ({
@@ -78,7 +86,7 @@ const CheckInOutForm = () => {
     }
   }, [auth.currentUser]);
 
-  // Check Firestore for an existing check-in doc with empty checkOutTime
+  // Check if there's an active check-in (doc with empty checkOutTime)
   const checkExistingCheckIn = async () => {
     if (!auth.currentUser) return;
     try {
@@ -91,7 +99,7 @@ const CheckInOutForm = () => {
       if (!querySnapshot.empty) {
         const activeDoc = querySnapshot.docs[0];
         setCurrentDocId(activeDoc.id);
-        setFormData(activeDoc.data()); // name, location, etc.
+        setFormData(activeDoc.data());
         setIsCheckedIn(true);
       }
     } catch (error) {
@@ -99,21 +107,16 @@ const CheckInOutForm = () => {
     }
   };
 
-  // General input change handler (except "name" is read-only, but we’ll keep it)
+  // Handle input changes (location, companyName, etc.)
   const handleInputChange = (e) => {
     const { name, value } = e.target;
-    setFormData((prevState) => ({
-      ...prevState,
+    setFormData((prev) => ({
+      ...prev,
       [name]: value,
     }));
   };
 
-  // Return the current date/time as a string
-  const getCurrentDateTime = () => {
-    return new Date().toLocaleString();
-  };
-
-  // Request user’s device location and return an address string
+  // 3. Get user device location with higher accuracy
   const getDeviceAddress = () => {
     return new Promise((resolve, reject) => {
       if (!navigator.geolocation) {
@@ -122,7 +125,7 @@ const CheckInOutForm = () => {
       navigator.geolocation.getCurrentPosition(
         async (position) => {
           const { latitude, longitude } = position.coords;
-          // Attempt to get a textual address via reverse geocoding
+          // Try to get textual address
           const addressString = await reverseGeocode(latitude, longitude);
           resolve(addressString);
         },
@@ -130,33 +133,33 @@ const CheckInOutForm = () => {
           console.error('Error getting location:', error);
           reject('User denied or location unavailable.');
         },
-        { enableHighAccuracy: true, timeout: 10000 }
+        {
+          enableHighAccuracy: true,  // request most accurate
+          timeout: 20000,            // 20s
+          maximumAge: 0,             // no cached position
+        }
       );
     });
   };
 
-  // Handle Check In
+  // Handle Check-In
   const handleCheckIn = async () => {
-    // Validate required fields
     if (!formData.name || !formData.companyName || !formData.location) {
       alert('Please fill in all required fields');
       return;
     }
-
     try {
-      // Prompt for location
       const address = await getDeviceAddress();
+      const checkInTime = getFormattedDateTime();
 
       const checkInData = {
         ...formData,
-        checkInTime: getCurrentDateTime(),
+        checkInTime,
         checkOutTime: '',
         userId: auth.currentUser.uid,
         userEmail: auth.currentUser.email,
-        // Store check-in address
-        'checkInAdd': address,
-        // Initialize check-out address as empty string for now
-        'checkOutAdd': '',
+        checkInAdd: address,
+        checkOutAdd: '',
       };
 
       const docRef = await addDoc(collection(db, 'check-ins'), checkInData);
@@ -169,25 +172,23 @@ const CheckInOutForm = () => {
     }
   };
 
-  // Handle Check Out
+  // Handle Check-Out
   const handleCheckOut = async () => {
     if (!currentDocId) {
       alert('No active check-in found');
       return;
     }
     try {
-      // Prompt for location on check-out
       const address = await getDeviceAddress();
-      const checkOutTime = getCurrentDateTime();
+      const checkOutTime = getFormattedDateTime();
 
       await updateDoc(doc(db, 'check-ins', currentDocId), {
         checkOutTime,
-        // Store check-out address
-        'checkOutAdd': address,
+        checkOutAdd: address,
       });
 
-      setFormData((prevState) => ({
-        ...prevState,
+      setFormData((prev) => ({
+        ...prev,
         checkOutTime,
       }));
 
@@ -195,7 +196,7 @@ const CheckInOutForm = () => {
       setCurrentDocId(null);
       setShowMessage('Successfully Checked Out!');
 
-      // Clear message after 3 seconds, reset form
+      // Reset after 3s
       setTimeout(() => {
         setShowMessage('');
         setFormData({
@@ -214,7 +215,6 @@ const CheckInOutForm = () => {
 
   return (
     <div className="max-w-md mx-auto mt-10 p-6 bg-white rounded-lg shadow-lg">
-      {/* Logo */}
       <div className="flex justify-center mb-6">
         <img src="/pride-logo.png" alt="Pride Hotels & Resorts" className="h-16" />
       </div>
@@ -223,7 +223,6 @@ const CheckInOutForm = () => {
         Sales Person Check In/Out
       </h2>
 
-      {/* Success message */}
       {showMessage && (
         <div className="mb-4 p-2 bg-green-100 text-green-700 rounded text-center">
           {showMessage}
@@ -231,7 +230,7 @@ const CheckInOutForm = () => {
       )}
 
       <div className="space-y-4">
-        {/* Name field (read-only) */}
+        {/* Name (read-only) */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
             Name *
@@ -240,7 +239,6 @@ const CheckInOutForm = () => {
             type="text"
             name="name"
             value={formData.name}
-            onChange={handleInputChange}
             readOnly
             className="w-full p-2 border rounded-md bg-gray-50 cursor-not-allowed"
             required
