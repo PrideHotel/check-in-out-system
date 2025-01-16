@@ -12,10 +12,28 @@ import {
 } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 
+// Example: Basic function to get a textual address from latitude/longitude
+// using Nominatim (OpenStreetMap). You can swap it for Google Maps Geocoding, etc.
+async function reverseGeocode(lat, lon) {
+  try {
+    const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json`;
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error('Failed to fetch address');
+    }
+    const data = await response.json();
+    // data.display_name often contains the full address
+    return data.display_name || `Lat: ${lat}, Lon: ${lon}`;
+  } catch (error) {
+    console.error('Reverse geocoding error:', error);
+    // Fallback to lat/long if something fails
+    return `Lat: ${lat}, Lon: ${lon}`;
+  }
+}
+
 const CheckInOutForm = () => {
   const auth = getAuth();
 
-  // State for form fields
   const [formData, setFormData] = useState({
     name: '',
     location: '',
@@ -23,6 +41,10 @@ const CheckInOutForm = () => {
     checkInTime: '',
     checkOutTime: '',
   });
+
+  // We’ll store addresses in Firestore fields:
+  // - checkInAdd  (Check-in Address)
+  // - checkOutAdd (Check-out Address)
 
   const locations = [
     'Ambaji',
@@ -37,24 +59,18 @@ const CheckInOutForm = () => {
     'Rajkot',
   ];
 
-  // State to track whether the user is currently checked in
   const [isCheckedIn, setIsCheckedIn] = useState(false);
-
-  // Firestore document ID to update on check-out
   const [currentDocId, setCurrentDocId] = useState(null);
-
-  // Success message after check-out
   const [showMessage, setShowMessage] = useState('');
 
-  // On component mount, check if user already has an active check-in
+  // On mount, check if user has an active check-in
   useEffect(() => {
     checkExistingCheckIn();
   }, []);
 
-  // Also, whenever we have a currentUser, auto-fill the Name field
+  // If user has a displayName in Auth, auto-fill the name
   useEffect(() => {
     if (auth.currentUser && auth.currentUser.displayName) {
-      // Populate the name from auth user’s displayName
       setFormData((prev) => ({
         ...prev,
         name: auth.currentUser.displayName,
@@ -62,7 +78,7 @@ const CheckInOutForm = () => {
     }
   }, [auth.currentUser]);
 
-  // Check Firestore if user is already checked in (no checkOutTime)
+  // Check Firestore for an existing check-in doc with empty checkOutTime
   const checkExistingCheckIn = async () => {
     if (!auth.currentUser) return;
     try {
@@ -75,7 +91,7 @@ const CheckInOutForm = () => {
       if (!querySnapshot.empty) {
         const activeDoc = querySnapshot.docs[0];
         setCurrentDocId(activeDoc.id);
-        setFormData(activeDoc.data());
+        setFormData(activeDoc.data()); // name, location, etc.
         setIsCheckedIn(true);
       }
     } catch (error) {
@@ -83,68 +99,93 @@ const CheckInOutForm = () => {
     }
   };
 
-  // Handle field changes (except "name" since it's read-only)
+  // General input change handler (except "name" is read-only, but we’ll keep it)
   const handleInputChange = (e) => {
     const { name, value } = e.target;
-    // If you really want to block edits to name in code, you could do:
-    // if (name === 'name') return;
     setFormData((prevState) => ({
       ...prevState,
       [name]: value,
     }));
   };
 
-  // Format date & time together
+  // Return the current date/time as a string
   const getCurrentDateTime = () => {
     return new Date().toLocaleString();
   };
 
-  // Handle Check-In
+  // Request user’s device location and return an address string
+  const getDeviceAddress = () => {
+    return new Promise((resolve, reject) => {
+      if (!navigator.geolocation) {
+        return reject('Geolocation not supported by this browser.');
+      }
+      navigator.geolocation.getCurrentPosition(
+        async (position) => {
+          const { latitude, longitude } = position.coords;
+          // Attempt to get a textual address via reverse geocoding
+          const addressString = await reverseGeocode(latitude, longitude);
+          resolve(addressString);
+        },
+        (error) => {
+          console.error('Error getting location:', error);
+          reject('User denied or location unavailable.');
+        },
+        { enableHighAccuracy: true, timeout: 10000 }
+      );
+    });
+  };
+
+  // Handle Check In
   const handleCheckIn = async () => {
-    // Make sure required fields are filled
+    // Validate required fields
     if (!formData.name || !formData.companyName || !formData.location) {
       alert('Please fill in all required fields');
       return;
     }
 
     try {
-      // Build the check-in object
+      // Prompt for location
+      const address = await getDeviceAddress();
+
       const checkInData = {
         ...formData,
         checkInTime: getCurrentDateTime(),
         checkOutTime: '',
         userId: auth.currentUser.uid,
         userEmail: auth.currentUser.email,
+        // Store check-in address
+        'checkInAdd': address,
+        // Initialize check-out address as empty string for now
+        'checkOutAdd': '',
       };
 
-      // Add to Firestore
       const docRef = await addDoc(collection(db, 'check-ins'), checkInData);
-
       setCurrentDocId(docRef.id);
       setFormData(checkInData);
       setIsCheckedIn(true);
     } catch (error) {
       console.error('Error during check-in:', error);
-      alert('Error during check-in. Please try again.');
+      alert(error?.message || 'Error during check-in. Please try again.');
     }
   };
 
-  // Handle Check-Out
+  // Handle Check Out
   const handleCheckOut = async () => {
     if (!currentDocId) {
-      alert('No active check-in found.');
+      alert('No active check-in found');
       return;
     }
-
     try {
+      // Prompt for location on check-out
+      const address = await getDeviceAddress();
       const checkOutTime = getCurrentDateTime();
 
-      // Update existing doc with checkOutTime
       await updateDoc(doc(db, 'check-ins', currentDocId), {
         checkOutTime,
+        // Store check-out address
+        'checkOutAdd': address,
       });
 
-      // Update local state
       setFormData((prevState) => ({
         ...prevState,
         checkOutTime,
@@ -154,7 +195,7 @@ const CheckInOutForm = () => {
       setCurrentDocId(null);
       setShowMessage('Successfully Checked Out!');
 
-      // Clear message after 3 seconds and reset form
+      // Clear message after 3 seconds, reset form
       setTimeout(() => {
         setShowMessage('');
         setFormData({
@@ -167,7 +208,7 @@ const CheckInOutForm = () => {
       }, 3000);
     } catch (error) {
       console.error('Error during check-out:', error);
-      alert('Error during check-out. Please try again.');
+      alert(error?.message || 'Error during check-out. Please try again.');
     }
   };
 
@@ -182,7 +223,7 @@ const CheckInOutForm = () => {
         Sales Person Check In/Out
       </h2>
 
-      {/* Show success message on check-out */}
+      {/* Success message */}
       {showMessage && (
         <div className="mb-4 p-2 bg-green-100 text-green-700 rounded text-center">
           {showMessage}
@@ -200,7 +241,7 @@ const CheckInOutForm = () => {
             name="name"
             value={formData.name}
             onChange={handleInputChange}
-            readOnly // or disabled if you prefer
+            readOnly
             className="w-full p-2 border rounded-md bg-gray-50 cursor-not-allowed"
             required
           />
@@ -244,7 +285,7 @@ const CheckInOutForm = () => {
           />
         </div>
 
-        {/* Check In Time */}
+        {/* Check In Time (read-only) */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
             Check In Time
@@ -257,7 +298,7 @@ const CheckInOutForm = () => {
           />
         </div>
 
-        {/* Check Out Time */}
+        {/* Check Out Time (read-only) */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
             Check Out Time
