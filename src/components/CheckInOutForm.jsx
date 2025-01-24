@@ -168,7 +168,7 @@ const CheckInOutForm = () => {
       setIsCheckedIn(true);
     } catch (error) {
       console.error('Error during check-in:', error);
-      alert(error?.message || 'Error during check-in. Please try again.');
+      alert(error?.message || 'Error during check-in. Location access needed.');
     }
   };
 
@@ -209,7 +209,7 @@ const CheckInOutForm = () => {
       }, 3000);
     } catch (error) {
       console.error('Error during check-out:', error);
-      alert(error?.message || 'Error during check-out. Please try again.');
+      alert(error?.message || 'Error during check-out. Location access needed.');
     }
   };
 
