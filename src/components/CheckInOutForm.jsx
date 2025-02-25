@@ -57,16 +57,7 @@ const CheckInOutForm = () => {
   // to track the actual addresses.
 
   const locations = [
-    'Ambaji',
-    'Bechraji',
-    'Bharuch',
-    'Bhopal',
-    'Canopus',
-    'Deoghar',
-    'Dwarka',
-    'Haldwani',
-    'Haridwar',
-    'Rajkot',
+    'Jaipur',
   ];
 
   const [isCheckedIn, setIsCheckedIn] = useState(false);
