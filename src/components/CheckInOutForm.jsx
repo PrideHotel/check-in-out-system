@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Clock } from 'lucide-react';
 import { db } from '../firebase.js';
 import {
@@ -29,7 +29,7 @@ async function reverseGeocode(lat, lon) {
 }
 
 // 2. Consistent Date/Time Formatter (24-hour format)
-// Example format: "2023-08-23 14:35:12"
+// Example format: "23-08-2023 14:35:12"
 function getFormattedDateTime() {
   const now = new Date();
   const day = String(now.getDate()).padStart(2, '0');
@@ -44,6 +44,7 @@ function getFormattedDateTime() {
 
 const CheckInOutForm = () => {
   const auth = getAuth();
+  const dropdownRef = useRef(null);
 
   const [formData, setFormData] = useState({
     name: '',
@@ -91,12 +92,40 @@ const CheckInOutForm = () => {
   const [currentDocId, setCurrentDocId] = useState(null);
   const [showMessage, setShowMessage] = useState('');
 
-  useEffect(() => { checkExistingCheckIn(); }, []);
+  useEffect(() => {
+    checkExistingCheckIn();
+  }, []);
+
   useEffect(() => {
     if (auth.currentUser?.displayName) {
       setFormData(prev => ({ ...prev, name: auth.currentUser.displayName }));
     }
   }, [auth.currentUser]);
+
+  // Add click outside handler
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setShowDropdown(false);
+      }
+    };
+
+    const handleEscape = (event) => {
+      if (event.key === 'Escape') {
+        setShowDropdown(false);
+      }
+    };
+
+    if (showDropdown) {
+      document.addEventListener('mousedown', handleClickOutside);
+      document.addEventListener('keydown', handleEscape);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [showDropdown]);
 
   const checkExistingCheckIn = async () => {
     if (!auth.currentUser) return;
@@ -108,9 +137,9 @@ const CheckInOutForm = () => {
       );
       const snapshot = await getDocs(q);
       if (!snapshot.empty) {
-        const doc = snapshot.docs[0];
-        setCurrentDocId(doc.id);
-        setFormData(doc.data());
+        const docSnap = snapshot.docs[0];
+        setCurrentDocId(docSnap.id);
+        setFormData(docSnap.data());
         setIsCheckedIn(true);
       }
     } catch (error) {
@@ -204,7 +233,7 @@ const CheckInOutForm = () => {
         checkOutAdd: address,
       });
 
-      setFormData((prev) => ({
+      setFormData(prev => ({
         ...prev,
         checkOutTime,
       }));
@@ -262,12 +291,12 @@ const CheckInOutForm = () => {
           />
         </div>
 
-        {/* Location dropdown */}
+        {/* Location dropdown with click-outside handling */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
             Location *
           </label>
-          <div className="relative">
+          <div className="relative" ref={dropdownRef}>
             <input
               type="text"
               name="location"
