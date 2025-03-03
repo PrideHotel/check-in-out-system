@@ -32,14 +32,14 @@ async function reverseGeocode(lat, lon) {
 // Example format: "2023-08-23 14:35:12"
 function getFormattedDateTime() {
   const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
   const day = String(now.getDate()).padStart(2, '0');
-  const hours = String(now.getHours()).padStart(2, '0');   // 24-hour
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const year = now.getFullYear();
+  const hours = String(now.getHours()).padStart(2, '0');
   const minutes = String(now.getMinutes()).padStart(2, '0');
   const seconds = String(now.getSeconds()).padStart(2, '0');
 
-  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+  return `${day}-${month}-${year} ${hours}:${minutes}:${seconds}`;
 }
 
 const CheckInOutForm = () => {
@@ -53,8 +53,9 @@ const CheckInOutForm = () => {
     checkOutTime: '',
   });
 
-  // Additional fields: checkInAdd, checkOutAdd will be stored in Firestore
-  // to track the actual addresses.
+  // Searchable dropdown state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showDropdown, setShowDropdown] = useState(false);
 
   const locations = [
     'Alkapuri',
@@ -81,24 +82,22 @@ const CheckInOutForm = () => {
     'Udaipur',
   ];
 
+  // Filter locations based on search query
+  const filteredLocations = locations.filter(location =>
+    location.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
   const [isCheckedIn, setIsCheckedIn] = useState(false);
   const [currentDocId, setCurrentDocId] = useState(null);
   const [showMessage, setShowMessage] = useState('');
 
+  useEffect(() => { checkExistingCheckIn(); }, []);
   useEffect(() => {
-    checkExistingCheckIn();
-  }, []);
-
-  useEffect(() => {
-    if (auth.currentUser && auth.currentUser.displayName) {
-      setFormData((prev) => ({
-        ...prev,
-        name: auth.currentUser.displayName,
-      }));
+    if (auth.currentUser?.displayName) {
+      setFormData(prev => ({ ...prev, name: auth.currentUser.displayName }));
     }
   }, [auth.currentUser]);
 
-  // Check if there's an active check-in (doc with empty checkOutTime)
   const checkExistingCheckIn = async () => {
     if (!auth.currentUser) return;
     try {
@@ -107,25 +106,31 @@ const CheckInOutForm = () => {
         where('userId', '==', auth.currentUser.uid),
         where('checkOutTime', '==', '')
       );
-      const querySnapshot = await getDocs(q);
-      if (!querySnapshot.empty) {
-        const activeDoc = querySnapshot.docs[0];
-        setCurrentDocId(activeDoc.id);
-        setFormData(activeDoc.data());
+      const snapshot = await getDocs(q);
+      if (!snapshot.empty) {
+        const doc = snapshot.docs[0];
+        setCurrentDocId(doc.id);
+        setFormData(doc.data());
         setIsCheckedIn(true);
       }
     } catch (error) {
-      console.error('Error checking existing check-in:', error);
+      console.error('Error checking check-in:', error);
     }
   };
 
-  // Handle input changes (location, companyName, etc.)
+  const handleLocationSelect = (location) => {
+    setFormData(prev => ({ ...prev, location }));
+    setSearchQuery(location);
+    setShowDropdown(false);
+  };
+
   const handleInputChange = (e) => {
     const { name, value } = e.target;
-    setFormData((prev) => ({
-      ...prev,
-      [name]: value,
-    }));
+    if (name === 'location') {
+      setSearchQuery(value);
+      setShowDropdown(true);
+    }
+    setFormData(prev => ({ ...prev, [name]: value }));
   };
 
   // 3. Get user device location with higher accuracy
@@ -228,7 +233,7 @@ const CheckInOutForm = () => {
   return (
     <div className="max-w-md mx-auto mt-10 p-6 bg-white rounded-lg shadow-lg">
       <div className="flex justify-center mb-6">
-        <img src="/pride-logo.png" alt="Pride Hotels & Resorts" className="h-16" />
+        <img src="/pride-logo.png" alt="Pride Hotels" className="h-16" />
       </div>
 
       <h2 className="text-2xl font-bold text-center mb-6">
@@ -262,21 +267,32 @@ const CheckInOutForm = () => {
           <label className="block text-sm font-medium text-gray-700 mb-1">
             Location *
           </label>
-          <select
-            name="location"
-            value={formData.location}
-            onChange={handleInputChange}
-            disabled={isCheckedIn}
-            className="w-full p-2 border rounded-md focus:ring-2 focus:ring-blue-500"
-            required
-          >
-            <option value="">Select Location</option>
-            {locations.map((loc) => (
-              <option key={loc} value={loc}>
-                {loc}
-              </option>
-            ))}
-          </select>
+          <div className="relative">
+            <input
+              type="text"
+              name="location"
+              value={searchQuery}
+              onChange={handleInputChange}
+              onFocus={() => setShowDropdown(true)}
+              disabled={isCheckedIn}
+              className="w-full p-2 border rounded-md focus:ring-2 focus:ring-blue-500"
+              placeholder="Search location..."
+              required
+            />
+            {showDropdown && (
+              <div className="absolute z-10 w-full mt-1 bg-white border rounded-md shadow-lg max-h-60 overflow-auto">
+                {filteredLocations.map(loc => (
+                  <div
+                    key={loc}
+                    onClick={() => handleLocationSelect(loc)}
+                    className="p-2 hover:bg-gray-100 cursor-pointer"
+                  >
+                    {loc}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Company Name */}
