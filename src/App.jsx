@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
 import CheckInOutForm from './components/CheckInOutForm';
 import Login from './components/Login';
+import History from './components/History';
 import { useState } from 'react';
 
 function App() {
@@ -12,16 +13,28 @@ function App() {
         <nav className="bg-white shadow-lg">
           <div className="max-w-6xl mx-auto px-4">
             <div className="flex justify-between items-center h-16">
-              <div>
+              <div className="flex space-x-4">
                 {isAuthenticated && (
-                  <Link to="/" className="text-gray-700 hover:text-blue-500">Check In/Out</Link>
+                  <>
+                    <Link to="/" className="text-gray-700 hover:text-blue-500">
+                      Check In/Out
+                    </Link>
+                    <Link to="/history" className="text-gray-700 hover:text-blue-500">
+                      History
+                    </Link>
+                  </>
                 )}
               </div>
               <div>
                 {!isAuthenticated ? (
-                  <Link to="/login" className="text-gray-700 hover:text-blue-500">Login</Link>
+                  <Link to="/login" className="text-gray-700 hover:text-blue-500">
+                    Login
+                  </Link>
                 ) : (
-                  <button onClick={() => setIsAuthenticated(false)} className="text-gray-700 hover:text-blue-500">
+                  <button
+                    onClick={() => setIsAuthenticated(false)}
+                    className="text-gray-700 hover:text-blue-500"
+                  >
                     Logout
                   </button>
                 )}
@@ -32,13 +45,29 @@ function App() {
 
         <div className="container mx-auto px-4 py-6">
           <Routes>
-            <Route 
-              path="/" 
-              element={isAuthenticated ? <CheckInOutForm /> : <Login setIsAuthenticated={setIsAuthenticated} />} 
+            <Route
+              path="/"
+              element={
+                isAuthenticated ? (
+                  <CheckInOutForm />
+                ) : (
+                  <Login setIsAuthenticated={setIsAuthenticated} />
+                )
+              }
             />
-            <Route 
-              path="/login" 
-              element={<Login setIsAuthenticated={setIsAuthenticated} />} 
+            <Route
+              path="/login"
+              element={<Login setIsAuthenticated={setIsAuthenticated} />}
+            />
+            <Route
+              path="/history"
+              element={
+                isAuthenticated ? (
+                  <History />
+                ) : (
+                  <Login setIsAuthenticated={setIsAuthenticated} />
+                )
+              }
             />
           </Routes>
         </div>
