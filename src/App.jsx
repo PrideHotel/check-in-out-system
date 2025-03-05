@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
+import { getAuth, signOut } from 'firebase/auth';
 import CheckInOutForm from './components/CheckInOutForm';
 import Login from './components/Login';
 import History from './components/History';
@@ -6,6 +7,16 @@ import { useState } from 'react';
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const auth = getAuth();
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      setIsAuthenticated(false);
+    } catch (error) {
+      console.error('Logout error:', error);
+    }
+  };
 
   return (
     <BrowserRouter>
@@ -32,7 +43,7 @@ function App() {
                   </Link>
                 ) : (
                   <button
-                    onClick={() => setIsAuthenticated(false)}
+                    onClick={handleLogout}
                     className="text-gray-700 hover:text-blue-500"
                   >
                     Logout
