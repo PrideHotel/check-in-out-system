@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { db } from '../firebase.js';
+import { db } from '../firebase';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import { Link } from 'react-router-dom';
@@ -9,9 +9,11 @@ const History = () => {
   const [records, setRecords] = useState([]);
   const [companyFilter, setCompanyFilter] = useState('');
   const [dateFilter, setDateFilter] = useState('');
+  const [error, setError] = useState('');
 
   useEffect(() => {
     const fetchData = async () => {
+      setError('');
       if (!auth.currentUser) return;
       
       try {
@@ -29,6 +31,7 @@ const History = () => {
         setRecords(data);
       } catch (error) {
         console.error('Error fetching records:', error);
+        setError('Failed to load data - check permissions or try again later.');
       }
     };
 
