@@ -234,7 +234,7 @@ const CheckInOutForm = () => {
       });
     } catch (error) {
       console.error('Check-in error:', error);
-      alert(error.message || 'Cannot check-in. Please try again.');
+      alert(error.message || 'Error during check-in. Location access needed.');
     } finally {
       setIsProcessing(false);
     }
