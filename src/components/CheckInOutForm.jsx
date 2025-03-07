@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Clock } from 'lucide-react';
+import { Clock, Loader2 } from 'lucide-react';
 import { db } from '../firebase.js';
 import {
   collection,
@@ -9,6 +9,7 @@ import {
   getDocs,
   updateDoc,
   doc,
+  runTransaction
 } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 
@@ -57,6 +58,9 @@ const CheckInOutForm = () => {
   // Searchable dropdown state
   const [searchQuery, setSearchQuery] = useState('');
   const [showDropdown, setShowDropdown] = useState(false);
+
+  // UI loading state for processing
+  const [isProcessing, setIsProcessing] = useState(false);
 
   const locations = [
     'Alkapuri',
@@ -188,33 +192,51 @@ const CheckInOutForm = () => {
     });
   };
 
-  // Handle Check-In
+  // Handle Check-In with transaction and loading state
   const handleCheckIn = async () => {
     if (!formData.name || !formData.companyName || !formData.location) {
       alert('Please fill in all required fields');
       return;
     }
+    setIsProcessing(true);
     try {
-      const address = await getDeviceAddress();
-      const checkInTime = getFormattedDateTime();
+      await runTransaction(db, async (transaction) => {
+        // Check for existing active check-in
+        const q = query(
+          collection(db, 'check-ins'),
+          where('userId', '==', auth.currentUser.uid),
+          where('checkOutTime', '==', '')
+        );
+        
+        const snapshot = await getDocs(q);
+        if (!snapshot.empty) {
+          throw new Error('You have an active check-in. Please check out first.');
+        }
 
-      const checkInData = {
-        ...formData,
-        checkInTime,
-        checkOutTime: '',
-        userId: auth.currentUser.uid,
-        userEmail: auth.currentUser.email,
-        checkInAdd: address,
-        checkOutAdd: '',
-      };
+        // Proceed with new check-in
+        const address = await getDeviceAddress();
+        const checkInTime = getFormattedDateTime();
 
-      const docRef = await addDoc(collection(db, 'check-ins'), checkInData);
-      setCurrentDocId(docRef.id);
-      setFormData(checkInData);
-      setIsCheckedIn(true);
+        const checkInData = {
+          ...formData,
+          checkInTime,
+          checkOutTime: '',
+          userId: auth.currentUser.uid,
+          userEmail: auth.currentUser.email,
+          checkInAdd: address,
+          checkOutAdd: '',
+        };
+
+        const docRef = await addDoc(collection(db, 'check-ins'), checkInData);
+        setCurrentDocId(docRef.id);
+        setFormData(checkInData);
+        setIsCheckedIn(true);
+      });
     } catch (error) {
-      console.error('Error during check-in:', error);
-      alert(error?.message || 'Error during check-in. Location access needed.');
+      console.error('Check-in error:', error);
+      alert(error.message || 'Cannot check-in. Please try again.');
+    } finally {
+      setIsProcessing(false);
     }
   };
 
@@ -370,15 +392,24 @@ const CheckInOutForm = () => {
         <div className="flex justify-center space-x-4 mt-6">
           <button
             onClick={handleCheckIn}
-            disabled={isCheckedIn}
+            disabled={isCheckedIn || isProcessing}
             className={`flex items-center px-4 py-2 rounded-md ${
-              isCheckedIn
+              isCheckedIn || isProcessing
                 ? 'bg-gray-300 cursor-not-allowed'
                 : 'bg-blue-500 hover:bg-blue-600 text-white'
             }`}
           >
-            <Clock className="w-4 h-4 mr-2" />
-            Check In
+            {isProcessing ? (
+              <span className="flex items-center">
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                Processing...
+              </span>
+            ) : (
+              <>
+                <Clock className="w-4 h-4 mr-2" />
+                Check In
+              </>
+            )}
           </button>
 
           <button
