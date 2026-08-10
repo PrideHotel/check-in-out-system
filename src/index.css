@@ -1,3 +1,163 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    @apply bg-slate-100 text-slate-800 antialiased;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  }
+
+  /* A single, consistent focus ring for every interactive element. */
+  :focus-visible {
+    @apply outline-none ring-2 ring-brand-500/60 ring-offset-2 ring-offset-white;
+  }
+
+  /* Slim, unobtrusive scrollbars for dropdowns and tables. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: theme('colors.slate.300') transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-slate-300;
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    @apply bg-slate-400;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+@layer components {
+  /* ---------- Surfaces ---------- */
+  .card {
+    @apply rounded-2xl border border-slate-200/80 bg-white shadow-card;
+  }
+
+  .card-pad {
+    @apply p-5 sm:p-7;
+  }
+
+  /* ---------- Form controls ---------- */
+  .label {
+    @apply mb-1.5 flex items-center gap-1.5 text-sm font-medium text-slate-700;
+  }
+
+  .input {
+    @apply w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-[15px] text-slate-900
+           placeholder:text-slate-400 transition
+           hover:border-slate-400
+           focus:border-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-500/15
+           disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-500;
+  }
+
+  /* Input variant that leaves room for a leading icon. */
+  .input-icon {
+    @apply pl-10;
+  }
+
+  .input-readonly {
+    @apply cursor-default border-slate-200 bg-slate-50 text-slate-600;
+  }
+
+  .field-icon {
+    @apply pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400;
+  }
+
+  /* ---------- Buttons ---------- */
+  .btn {
+    @apply inline-flex select-none items-center justify-center gap-2 rounded-xl px-4 py-2.5
+           text-sm font-semibold transition active:scale-[0.98]
+           disabled:pointer-events-none disabled:opacity-60;
+  }
+
+  .btn-primary {
+    @apply btn bg-brand-900 text-white shadow-brand hover:bg-brand-800;
+  }
+
+  .btn-success {
+    @apply btn bg-emerald-600 text-white shadow-lg shadow-emerald-600/25 hover:bg-emerald-700;
+  }
+
+  .btn-secondary {
+    @apply btn border border-slate-300 bg-white text-slate-700 hover:border-slate-400 hover:bg-slate-50;
+  }
+
+  .btn-ghost {
+    @apply btn text-slate-600 hover:bg-slate-100 hover:text-slate-900;
+  }
+
+  .btn-disabled {
+    @apply btn cursor-not-allowed bg-slate-200 text-slate-500 shadow-none;
+  }
+
+  /* ---------- Badges ---------- */
+  .badge {
+    @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold;
+  }
+
+  .badge-active {
+    @apply badge bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200;
+  }
+
+  .badge-done {
+    @apply badge bg-slate-100 text-slate-600 ring-1 ring-inset ring-slate-200;
+  }
+
+  /* ---------- Alerts ---------- */
+  .alert {
+    @apply flex items-start gap-2.5 rounded-xl border px-3.5 py-3 text-sm;
+  }
+
+  .alert-error {
+    @apply alert border-rose-200 bg-rose-50 text-rose-700;
+  }
+
+  .alert-success {
+    @apply alert border-emerald-200 bg-emerald-50 text-emerald-700;
+  }
+
+  .alert-info {
+    @apply alert border-sky-200 bg-sky-50 text-sky-700;
+  }
+
+  /* ---------- Loading skeleton ---------- */
+  .skeleton {
+    @apply relative overflow-hidden rounded-md bg-slate-200/70;
+  }
+
+  .skeleton::after {
+    @apply absolute inset-0 -translate-x-full animate-shimmer bg-gradient-to-r from-transparent via-white/60 to-transparent;
+    content: '';
+  }
+}
+
+@layer utilities {
+  /* Page backdrop: soft brand-tinted glow behind the app shell. */
+  .app-backdrop {
+    background-image:
+      radial-gradient(60rem 30rem at 50% -12rem, rgba(113, 48, 45, 0.12), transparent 70%),
+      radial-gradient(40rem 24rem at 100% 0%, rgba(190, 134, 60, 0.1), transparent 65%);
+  }
+
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
