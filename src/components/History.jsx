@@ -24,6 +24,7 @@ import {
   getVisitDuration,
   shortenAddress,
 } from '../utils/datetime';
+import { downloadCsv, exportStamp } from '../utils/csv';
 
 function StatCard({ icon: Icon, label, value, tone = 'brand' }) {
   const tones = {
@@ -185,30 +186,18 @@ const History = () => {
   }, [records]);
 
   const exportCsv = () => {
-    const headers = ['Company', 'Location', 'Check-In', 'Check-Out', 'Duration', 'Check-In Address'];
-    const escape = (value) => `"${String(value ?? '').replace(/"/g, '""')}"`;
-    const rows = filteredRecords.map((record) =>
-      [
+    downloadCsv(
+      `check-in-history-${exportStamp()}.csv`,
+      ['Company', 'Location', 'Check-In', 'Check-Out', 'Duration', 'Check-In Address'],
+      filteredRecords.map((record) => [
         record.companyName,
         record.location,
         record.checkInTime,
         record.checkOutTime || 'Not checked out',
         getVisitDuration(record.checkInTime, record.checkOutTime) || '',
         record.checkInAdd,
-      ]
-        .map(escape)
-        .join(',')
+      ])
     );
-
-    const blob = new Blob([[headers.map(escape).join(','), ...rows].join('\n')], {
-      type: 'text/csv;charset=utf-8;',
-    });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `check-in-history-${new Date().toISOString().slice(0, 10)}.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
   };
 
   return (

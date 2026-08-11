@@ -1,0 +1,64 @@
+rules_version = '2';
+
+// Security rules for the Sales Check In/Out app.
+//
+// Deploy by pasting this file into the Firebase console:
+//   Firestore Database -> Rules -> replace the contents -> Publish
+//
+// Model:
+//   - A salesperson may read and write only their own check-in records.
+//   - An administrator (a document in `admins` keyed by lower-cased email)
+//     may read every record, which is what powers the Team Data screen.
+//   - Nobody may edit the `admins` collection from the client; add and remove
+//     administrators from the Firebase console.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function userEmail() {
+      return request.auth.token.email.lower();
+    }
+
+    function isAdmin() {
+      return isSignedIn()
+        && request.auth.token.email != null
+        && exists(/databases/$(database)/documents/admins/$(userEmail()));
+    }
+
+    match /check-ins/{recordId} {
+      // Own records always; every record for admins (needed for Team Data).
+      allow read: if isSignedIn()
+        && (resource.data.userId == request.auth.uid || isAdmin());
+
+      // A record may only be created for yourself, and must start open.
+      allow create: if isSignedIn()
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.checkOutTime == '';
+
+      // Only the owner may check out, and the owner may never be reassigned.
+      allow update: if isSignedIn()
+        && resource.data.userId == request.auth.uid
+        && request.resource.data.userId == resource.data.userId;
+
+      // Visit history is an audit trail — no client-side deletes.
+      allow delete: if false;
+    }
+
+    match /admins/{adminEmail} {
+      // You may check your own admin status and nothing else.
+      allow get: if isSignedIn()
+        && request.auth.token.email != null
+        && userEmail() == adminEmail;
+      allow list, write: if false;
+    }
+
+    // Anything not matched above is denied.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

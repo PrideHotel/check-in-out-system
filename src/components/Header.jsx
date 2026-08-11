@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
 import { Link, NavLink, useLocation } from 'react-router-dom';
-import { Clock, History as HistoryIcon, LogOut, Menu, X } from 'lucide-react';
+import { Clock, History as HistoryIcon, LogOut, Menu, Users, X } from 'lucide-react';
 
-const NAV_ITEMS = [
+const BASE_NAV_ITEMS = [
   { to: '/', label: 'Check In/Out', icon: Clock },
   { to: '/history', label: 'History', icon: HistoryIcon },
 ];
+
+const ADMIN_NAV_ITEM = { to: '/admin', label: 'Team Data', icon: Users };
 
 function getInitials(user) {
   const source = user?.displayName || user?.email || '';
@@ -23,9 +25,10 @@ function navLinkClass({ isActive }) {
   ].join(' ');
 }
 
-const Header = ({ user, onLogout }) => {
+const Header = ({ user, isAdmin, onLogout }) => {
   const [menuOpen, setMenuOpen] = useState(false);
   const location = useLocation();
+  const navItems = isAdmin ? [...BASE_NAV_ITEMS, ADMIN_NAV_ITEM] : BASE_NAV_ITEMS;
 
   // Close the mobile menu whenever the route changes.
   useEffect(() => {
@@ -61,7 +64,7 @@ const Header = ({ user, onLogout }) => {
             <>
               {/* Desktop navigation */}
               <nav className="hidden items-center gap-1 md:flex" aria-label="Main">
-                {NAV_ITEMS.map(({ to, label, icon: Icon }) => (
+                {navItems.map(({ to, label, icon: Icon }) => (
                   <NavLink key={to} to={to} end={to === '/'} className={navLinkClass}>
                     <Icon className="h-4 w-4" aria-hidden="true" />
                     {label}
@@ -125,7 +128,7 @@ const Header = ({ user, onLogout }) => {
           </div>
 
           <nav className="flex flex-col gap-1" aria-label="Mobile">
-            {NAV_ITEMS.map(({ to, label, icon: Icon }) => (
+            {navItems.map(({ to, label, icon: Icon }) => (
               <NavLink key={to} to={to} end={to === '/'} className={navLinkClass}>
                 <Icon className="h-4 w-4" aria-hidden="true" />
                 {label}
