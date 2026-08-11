@@ -24,6 +24,31 @@ npm run lint     # eslint
 
 Firebase credentials live in `src/firebase.js`.
 
+## Getting the data out
+
+Every salesperson sees only their own visits on **History**. Managers and MIS
+get the whole team's data on the **Team Data** screen (`/admin`), which supports
+free-text search, a per-person filter, a date range, and **Export CSV** — the
+export includes a UTF-8 BOM so it opens straight into Excel. Only the rows
+currently matching the filters are exported.
+
+### Granting admin access
+
+Two one-time steps, both in the Firebase console — no code change or redeploy:
+
+1. **Publish the security rules.** Firestore Database → **Rules** → replace the
+   contents with [`firestore.rules`](./firestore.rules) → **Publish**. These
+   rules let each user read and write only their own records, and let admins
+   read everything.
+2. **Add the admin.** Firestore Database → **Data** → create a collection named
+   `admins`, and add a document whose **document ID is the person's
+   lower-cased email address** (for example `mis3@pridehotel.com`). The document
+   needs no fields — its existence is the grant.
+
+Removing that document revokes access. The **Team Data** link only appears in the
+navigation for admins, and `/admin` redirects everyone else back to the
+check-in screen.
+
 ## Project structure
 
 ```
@@ -35,10 +60,14 @@ src/
     Header.jsx               sticky navigation bar
     Login.jsx                login / sign-up screen
     CheckInOutForm.jsx       check-in & check-out screen
-    History.jsx              visit history with filters and CSV export
+    History.jsx              the signed-in user's own visits
+    AdminDashboard.jsx       whole-team visits, filters and CSV export
     ui/Toast.jsx             toast notification provider
     ui/toast-context.js      toast context + `useToast` hook
+  hooks/useIsAdmin.js        looks the user up in the `admins` collection
   utils/datetime.js          shared date/time formatting helpers
+  utils/csv.js               CSV building and download
+firestore.rules              security rules — paste into the Firebase console
 ```
 
 Records are stored in the `check-ins` Firestore collection with times in

@@ -6,9 +6,11 @@ import './firebase.js';
 import CheckInOutForm from './components/CheckInOutForm';
 import Login from './components/Login';
 import History from './components/History';
+import AdminDashboard from './components/AdminDashboard';
 import Header from './components/Header';
 import { ToastProvider } from './components/ui/Toast';
 import { useToast } from './components/ui/toast-context';
+import { useIsAdmin } from './hooks/useIsAdmin';
 
 function SplashScreen() {
   return (
@@ -33,6 +35,7 @@ function AppShell() {
   const toast = useToast();
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
+  const { isAdmin, checking: adminChecking } = useIsAdmin(user);
 
   // Keep the session across reloads instead of dropping back to the login screen.
   useEffect(() => {
@@ -58,7 +61,7 @@ function AppShell() {
 
   return (
     <div className="app-backdrop flex min-h-screen flex-col bg-slate-100">
-      <Header user={user} onLogout={handleLogout} />
+      <Header user={user} isAdmin={isAdmin} onLogout={handleLogout} />
 
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:py-10">
         <Routes>
@@ -68,6 +71,14 @@ function AppShell() {
             element={user ? <Navigate to="/" replace /> : <Login />}
           />
           <Route path="/history" element={requireAuth(<History user={user} />)} />
+          <Route
+            path="/admin"
+            element={requireAuth(
+              // Wait for the admin lookup before deciding, or a refresh on
+              // /admin would bounce an admin straight back to the home screen.
+              adminChecking ? <SplashScreen /> : isAdmin ? <AdminDashboard /> : <Navigate to="/" replace />
+            )}
+          />
           <Route path="*" element={<Navigate to={user ? '/' : '/login'} replace />} />
         </Routes>
       </main>
