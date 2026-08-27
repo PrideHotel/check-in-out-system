@@ -24,6 +24,19 @@ npm run lint     # eslint
 
 Firebase credentials live in `src/firebase.js`.
 
+## Deployment
+
+The app is a single-page app using `BrowserRouter`, so routes like `/login`,
+`/history` and `/admin` exist only in the browser — the build produces just
+`index.html`, `/assets/*` and `/pride-logo.png`. A static host asked directly
+for `/login` would return its own 404 before React ever runs.
+
+[`vercel.json`](./vercel.json) fixes this by rewriting every path that is not a
+real file to `/index.html`, letting the router resolve it. Vercel checks the
+filesystem before applying rewrites, so assets are still served normally. Any
+other host needs the same fallback (Netlify: `/* /index.html 200`; nginx:
+`try_files $uri /index.html`).
+
 ## Getting the data out
 
 Every salesperson sees only their own visits on **History**. Managers and MIS
