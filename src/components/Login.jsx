@@ -1,12 +1,17 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   getAuth,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   sendPasswordResetEmail,
   updateProfile,
+  GoogleAuthProvider,
+  signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
 } from 'firebase/auth';
 import { useNavigate } from 'react-router-dom';
+import GoogleIcon from './ui/GoogleIcon';
 import {
   AlertCircle,
   CheckCircle2,
@@ -33,6 +38,12 @@ const ERROR_MESSAGES = {
   'auth/network-request-failed': 'Network problem. Check your connection and try again.',
   'auth/email-already-in-use': 'An account with this email already exists. Try logging in.',
   'auth/weak-password': 'Please choose a password of at least 6 characters.',
+  'auth/account-exists-with-different-credential':
+    'An account already exists for this email. Sign in with your password instead.',
+  'auth/operation-not-allowed':
+    'Google sign-in is not enabled for this project. Enable it in Firebase → Authentication → Sign-in method.',
+  'auth/unauthorized-domain':
+    'This site is not authorised for Google sign-in. Add its domain in Firebase → Authentication → Settings → Authorized domains.',
 };
 
 function describeError(error, isLogin) {
@@ -41,6 +52,21 @@ function describeError(error, isLogin) {
     (isLogin ? 'Could not sign you in. Please try again.' : 'Could not create the account. Please try again.')
   );
 }
+
+// The user closed the Google window or clicked twice — not worth an error banner.
+const SILENT_GOOGLE_CODES = new Set([
+  'auth/popup-closed-by-user',
+  'auth/cancelled-popup-request',
+  'auth/user-cancelled',
+]);
+
+// Popups are unreliable in mobile browsers and in-app webviews; for these we
+// retry the whole thing as a full-page redirect rather than dead-ending.
+const REDIRECT_FALLBACK_CODES = new Set([
+  'auth/popup-blocked',
+  'auth/operation-not-supported-in-this-environment',
+  'auth/web-storage-unsupported',
+]);
 
 const Login = () => {
   const [displayName, setDisplayName] = useState('');
@@ -52,8 +78,65 @@ const Login = () => {
   const [showResetMessage, setShowResetMessage] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSendingReset, setIsSendingReset] = useState(false);
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
   const navigate = useNavigate();
   const auth = getAuth();
+
+  const busy = isSubmitting || isGoogleLoading;
+
+  // When Google sign-in falls back to a redirect, the browser leaves the page
+  // and comes back here. A success is picked up by the auth listener in App;
+  // this only exists so a failed redirect reports something instead of
+  // silently returning the user to an empty login form.
+  useEffect(() => {
+    let cancelled = false;
+
+    getRedirectResult(auth).catch((err) => {
+      console.error('Google redirect sign-in failed:', err);
+      if (!cancelled && !SILENT_GOOGLE_CODES.has(err?.code)) {
+        setError(describeError(err, true));
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [auth]);
+
+  const handleGoogleSignIn = async () => {
+    setError('');
+    setShowResetMessage('');
+    setIsGoogleLoading(true);
+
+    const provider = new GoogleAuthProvider();
+    // Always let the user pick, rather than silently reusing one Google session
+    // on a shared device.
+    provider.setCustomParameters({ prompt: 'select_account' });
+
+    try {
+      await signInWithPopup(auth, provider);
+      navigate('/');
+    } catch (err) {
+      if (SILENT_GOOGLE_CODES.has(err?.code)) return;
+
+      if (REDIRECT_FALLBACK_CODES.has(err?.code)) {
+        try {
+          // Navigates away; anything after this only runs if it failed.
+          await signInWithRedirect(auth, provider);
+          return;
+        } catch (redirectError) {
+          console.error('Google redirect sign-in failed:', redirectError);
+          setError(describeError(redirectError, true));
+          return;
+        }
+      }
+
+      console.error('Google sign-in failed:', err);
+      setError(describeError(err, true));
+    } finally {
+      setIsGoogleLoading(false);
+    }
+  };
 
   const switchMode = (nextIsLogin) => {
     if (nextIsLogin === isLogin) return;
@@ -168,6 +251,35 @@ const Login = () => {
             </div>
           )}
 
+          {/* Google sign-in — works for both new and returning users, so it
+              sits above the mode-specific email form. */}
+          <button
+            type="button"
+            onClick={handleGoogleSignIn}
+            disabled={busy}
+            className="btn-secondary w-full py-3"
+          >
+            {isGoogleLoading ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                Opening Google…
+              </>
+            ) : (
+              <>
+                <GoogleIcon className="h-[18px] w-[18px]" />
+                Continue with Google
+              </>
+            )}
+          </button>
+
+          <div className="my-5 flex items-center gap-3" aria-hidden="true">
+            <span className="h-px flex-1 bg-slate-200" />
+            <span className="text-xs font-medium uppercase tracking-wide text-slate-400">
+              or use email
+            </span>
+            <span className="h-px flex-1 bg-slate-200" />
+          </div>
+
           <form onSubmit={handleSubmit} className="space-y-4">
             {!isLogin && (
               <div className="animate-fade-in">
@@ -254,7 +366,7 @@ const Login = () => {
               </div>
             </div>
 
-            <button type="submit" disabled={isSubmitting} className="btn-primary w-full py-3">
+            <button type="submit" disabled={busy} className="btn-primary w-full py-3">
               {isSubmitting ? (
                 <>
                   <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
