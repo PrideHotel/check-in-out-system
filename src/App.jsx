@@ -7,10 +7,11 @@ import CheckInOutForm from './components/CheckInOutForm';
 import Login from './components/Login';
 import History from './components/History';
 import AdminDashboard from './components/AdminDashboard';
+import UserManagement from './components/UserManagement';
 import Header from './components/Header';
 import { ToastProvider } from './components/ui/Toast';
 import { useToast } from './components/ui/toast-context';
-import { useIsAdmin } from './hooks/useIsAdmin';
+import { useAdminAccess } from './hooks/useAdminAccess';
 
 function SplashScreen() {
   return (
@@ -35,7 +36,13 @@ function AppShell() {
   const toast = useToast();
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
-  const { isAdmin, checking: adminChecking } = useIsAdmin(user);
+  const {
+    isAdmin,
+    isSuperAdmin,
+    locations: allowedLocations,
+    hasAllLocations,
+    checking: roleChecking,
+  } = useAdminAccess(user);
 
   // Keep the session across reloads instead of dropping back to the login screen.
   useEffect(() => {
@@ -61,7 +68,7 @@ function AppShell() {
 
   return (
     <div className="app-backdrop flex min-h-screen flex-col bg-slate-100">
-      <Header user={user} isAdmin={isAdmin} onLogout={handleLogout} />
+      <Header user={user} isAdmin={isAdmin} isSuperAdmin={isSuperAdmin} onLogout={handleLogout} />
 
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:py-10">
         <Routes>
@@ -74,9 +81,30 @@ function AppShell() {
           <Route
             path="/admin"
             element={requireAuth(
-              // Wait for the admin lookup before deciding, or a refresh on
-              // /admin would bounce an admin straight back to the home screen.
-              adminChecking ? <SplashScreen /> : isAdmin ? <AdminDashboard /> : <Navigate to="/" replace />
+              // Wait for the role lookup before deciding, or a refresh on
+              // /admin would bounce a manager straight back to the home screen.
+              roleChecking ? (
+                <SplashScreen />
+              ) : isAdmin ? (
+                <AdminDashboard
+                  allowedLocations={allowedLocations}
+                  hasAllLocations={hasAllLocations}
+                />
+              ) : (
+                <Navigate to="/" replace />
+              )
+            )}
+          />
+          <Route
+            path="/users"
+            element={requireAuth(
+              roleChecking ? (
+                <SplashScreen />
+              ) : isSuperAdmin ? (
+                <UserManagement user={user} />
+              ) : (
+                <Navigate to="/" replace />
+              )
             )}
           />
           <Route path="*" element={<Navigate to={user ? '/' : '/login'} replace />} />

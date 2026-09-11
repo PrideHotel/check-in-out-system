@@ -68,22 +68,56 @@ free-text search, a per-person filter, a date range, and **Export CSV** — the
 export includes a UTF-8 BOM so it opens straight into Excel. Only the rows
 currently matching the filters are exported.
 
-### Granting admin access
+### Roles
 
-Two one-time steps, both in the Firebase console — no code change or redeploy:
+There are three levels, all keyed off the signed-in email address:
+
+| Role | Sees | Can manage roles |
+|---|---|---|
+| Salesperson (no role document) | Only their own visits, on **History** | No |
+| **Admin** | **Team Data** for the locations granted to them | No |
+| **SuperAdmin** | **Team Data** for every location | Yes — the **Roles** screen |
+
+Roles live in the `admins` collection, one document per person whose **ID is
+their lower-cased email address**:
+
+```jsonc
+// admins/mis3@pridehotel.com
+{ "role": "superadmin" }
+
+// admins/goa.manager@pridehotel.com — Goa and Daman only
+{ "role": "admin", "locations": ["Goa", "Daman"] }
+
+// admins/national@pridehotel.com — every location
+{ "role": "admin", "locations": [] }
+```
+
+An empty or missing `locations` array means every location, so admins created
+before location scoping keep working unchanged.
+
+### First-time setup
+
+Two one-time steps in the Firebase console — after this, roles are managed
+inside the app:
 
 1. **Publish the security rules.** Firestore Database → **Rules** → replace the
-   contents with [`firestore.rules`](./firestore.rules) → **Publish**. These
-   rules let each user read and write only their own records, and let admins
-   read everything.
-2. **Add the admin.** Firestore Database → **Data** → create a collection named
-   `admins`, and add a document whose **document ID is the person's
-   lower-cased email address** (for example `mis3@pridehotel.com`). The document
-   needs no fields — its existence is the grant.
+   contents with [`firestore.rules`](./firestore.rules) → **Publish**.
+2. **Create the first SuperAdmin.** Firestore Database → **Data** → collection
+   `admins` → document ID `mis3@pridehotel.com`, with a field `role` (string)
+   set to `superadmin`.
 
-Removing that document revokes access. The **Team Data** link only appears in the
-navigation for admins, and `/admin` redirects everyone else back to the
-check-in screen.
+From then on, a SuperAdmin adds and edits everyone else on the **Roles** screen.
+
+### How location scoping is enforced
+
+The rules — not the UI — decide what a manager can read. A scoped Admin's read
+is rejected for any record outside their locations, so the app sends a
+`where('location', 'in', [...])` query matching the grant. Editing the request
+in the browser cannot widen it: asking for everything fails the whole read.
+
+A SuperAdmin cannot change or delete **their own** role document, in the app or
+through the rules. That stops the last SuperAdmin locking everyone out of role
+management; use the Firebase console if you ever need to.
 
 ## Project structure
 
@@ -97,10 +131,12 @@ src/
     Login.jsx                login / sign-up screen
     CheckInOutForm.jsx       check-in & check-out screen
     History.jsx              the signed-in user's own visits
-    AdminDashboard.jsx       whole-team visits, filters and CSV export
+    AdminDashboard.jsx       team visits within your locations, filters, CSV export
+    UserManagement.jsx       SuperAdmin screen for roles and location access
     ui/Toast.jsx             toast notification provider
     ui/toast-context.js      toast context + `useToast` hook
-  hooks/useIsAdmin.js        looks the user up in the `admins` collection
+  hooks/useAdminAccess.js    resolves the user's role and location scope
+  constants/locations.js     the property list shared by check-in and permissions
   utils/datetime.js          shared date/time formatting helpers
   utils/csv.js               CSV building and download
 firestore.rules              security rules — paste into the Firebase console
