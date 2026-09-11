@@ -5,12 +5,18 @@ rules_version = '2';
 // Deploy by pasting this file into the Firebase console:
 //   Firestore Database -> Rules -> replace the contents -> Publish
 //
+// Roles live in the `admins` collection, one document per person keyed by
+// lower-cased email address:
+//
+//   { role: 'superadmin' }                          every location, manages roles
+//   { role: 'admin', locations: ['Goa', 'Indore'] } those locations only
+//   { role: 'admin', locations: [] }                every location
+//
 // Model:
-//   - A salesperson may read and write only their own check-in records.
-//   - An administrator (a document in `admins` keyed by lower-cased email)
-//     may read every record, which is what powers the Team Data screen.
-//   - Nobody may edit the `admins` collection from the client; add and remove
-//     administrators from the Firebase console.
+//   - A salesperson reads and writes only their own check-in records.
+//   - An Admin additionally reads records for the locations granted to them.
+//   - A SuperAdmin reads every record and is the only one who may edit roles.
+//   - Visit history is an audit trail and is never deleted from the client.
 
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -19,20 +25,59 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function hasEmail() {
+      return isSignedIn() && request.auth.token.email != null;
+    }
+
     function userEmail() {
       return request.auth.token.email.lower();
     }
 
-    function isAdmin() {
-      return isSignedIn()
-        && request.auth.token.email != null
-        && exists(/databases/$(database)/documents/admins/$(userEmail()));
+    function roleRef() {
+      return /databases/$(database)/documents/admins/$(userEmail());
+    }
+
+    function hasRole() {
+      return hasEmail() && exists(roleRef());
+    }
+
+    // One document read per request; Firestore caches repeated identical
+    // lookups, so a whole query still costs a single access call.
+    function roleData() {
+      return get(roleRef()).data;
+    }
+
+    function isSuperAdmin() {
+      return hasRole() && roleData().get('role', 'admin') == 'superadmin';
+    }
+
+    // Missing or empty means unrestricted, so admins created before location
+    // scoping existed keep working.
+    function scopedLocations() {
+      return roleData().get('locations', []);
+    }
+
+    function canSeeLocation(location) {
+      return hasRole()
+        && (isSuperAdmin() || scopedLocations().size() == 0 || location in scopedLocations());
+    }
+
+    function isValidRoleDoc() {
+      let incoming = request.resource.data;
+      return incoming.get('role', '') in ['admin', 'superadmin']
+        && incoming.get('locations', []) is list
+        && incoming.get('locations', []).size() <= 200;
     }
 
     match /check-ins/{recordId} {
-      // Own records always; every record for admins (needed for Team Data).
+      // Own records always. Managers get everything their locations cover —
+      // which means a scoped Admin must send a location-filtered query, or
+      // Firestore rejects the read for the records outside their scope.
       allow read: if isSignedIn()
-        && (resource.data.userId == request.auth.uid || isAdmin());
+        && (
+          resource.data.userId == request.auth.uid
+          || canSeeLocation(resource.data.get('location', ''))
+        );
 
       // A record may only be created for yourself, and must start open.
       allow create: if isSignedIn()
@@ -44,16 +89,20 @@ service cloud.firestore {
         && resource.data.userId == request.auth.uid
         && request.resource.data.userId == resource.data.userId;
 
-      // Visit history is an audit trail — no client-side deletes.
       allow delete: if false;
     }
 
     match /admins/{adminEmail} {
-      // You may check your own admin status and nothing else.
-      allow get: if isSignedIn()
-        && request.auth.token.email != null
-        && userEmail() == adminEmail;
-      allow list, write: if false;
+      // You may read your own role; a SuperAdmin may read anyone's.
+      allow get: if hasEmail() && (userEmail() == adminEmail || isSuperAdmin());
+      allow list: if isSuperAdmin();
+
+      // Only a SuperAdmin manages roles — and never their own, so the last
+      // SuperAdmin cannot demote or delete themselves and lock everybody out
+      // of role management. Change that from the Firebase console instead.
+      allow create: if isSuperAdmin() && isValidRoleDoc();
+      allow update: if isSuperAdmin() && adminEmail != userEmail() && isValidRoleDoc();
+      allow delete: if isSuperAdmin() && adminEmail != userEmail();
     }
 
     // Anything not matched above is denied.

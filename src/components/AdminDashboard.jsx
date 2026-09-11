@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { db } from '../firebase.js';
-import { collection, getDocs, query } from 'firebase/firestore';
+import { collection, getDocs, query, where } from 'firebase/firestore';
 import {
   AlertCircle,
   Building2,
@@ -95,7 +95,44 @@ function PermissionHelp() {
   );
 }
 
-const AdminDashboard = () => {
+// Firestore caps an `in` filter at 30 values, so a very wide grant is split
+// across several queries and merged.
+const IN_FILTER_LIMIT = 30;
+
+function chunk(items, size) {
+  const groups = [];
+  for (let index = 0; index < items.length; index += size) {
+    groups.push(items.slice(index, index + size));
+  }
+  return groups;
+}
+
+/**
+ * Reads the check-ins this manager is allowed to see.
+ *
+ * The security rules reject any document outside the granted locations, so a
+ * scoped Admin *must* send a location-filtered query — asking for everything
+ * would fail the whole read rather than silently returning less.
+ */
+async function fetchVisibleRecords({ hasAllLocations, allowedLocations }) {
+  const records = new Map();
+
+  const snapshots = hasAllLocations
+    ? [await getDocs(query(collection(db, 'check-ins')))]
+    : await Promise.all(
+        chunk(allowedLocations, IN_FILTER_LIMIT).map((group) =>
+          getDocs(query(collection(db, 'check-ins'), where('location', 'in', group)))
+        )
+      );
+
+  snapshots.forEach((snapshot) =>
+    snapshot.docs.forEach((docSnap) => records.set(docSnap.id, { id: docSnap.id, ...docSnap.data() }))
+  );
+
+  return [...records.values()];
+}
+
+const AdminDashboard = ({ allowedLocations = [], hasAllLocations = true }) => {
   const [records, setRecords] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
@@ -104,8 +141,13 @@ const AdminDashboard = () => {
 
   const [search, setSearch] = useState('');
   const [person, setPerson] = useState('');
+  const [location, setLocation] = useState('');
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
+
+  // A stable key so the effect re-runs when the grant changes, not on every
+  // render of the array prop.
+  const scopeKey = hasAllLocations ? '*' : [...allowedLocations].sort().join('|');
 
   useEffect(() => {
     let cancelled = false;
@@ -116,9 +158,10 @@ const AdminDashboard = () => {
       setPermissionDenied(false);
 
       try {
-        // No userId filter — this is the whole team's data.
-        const snapshot = await getDocs(query(collection(db, 'check-ins')));
-        const data = snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+        const data = await fetchVisibleRecords({
+          hasAllLocations,
+          allowedLocations,
+        });
 
         data.sort((a, b) => {
           const aTime = parseFormattedDateTime(a.checkInTime)?.getTime() ?? 0;
@@ -144,7 +187,8 @@ const AdminDashboard = () => {
     return () => {
       cancelled = true;
     };
-  }, [reloadToken]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reloadToken, scopeKey]);
 
   const people = useMemo(() => {
     const names = new Set();
@@ -155,10 +199,18 @@ const AdminDashboard = () => {
     return [...names].sort((a, b) => a.localeCompare(b));
   }, [records]);
 
-  const hasFilters = Boolean(search || person || fromDate || toDate);
+  // Only offer locations the manager can actually see.
+  const locationOptions = useMemo(() => {
+    const seen = new Set(records.map((record) => record.location).filter(Boolean));
+    const permitted = hasAllLocations ? [...seen] : allowedLocations.filter((l) => seen.has(l));
+    return permitted.sort((a, b) => a.localeCompare(b));
+  }, [records, allowedLocations, hasAllLocations]);
+
+  const hasFilters = Boolean(search || person || location || fromDate || toDate);
   const clearFilters = () => {
     setSearch('');
     setPerson('');
+    setLocation('');
     setFromDate('');
     setToDate('');
   };
@@ -184,6 +236,7 @@ const AdminDashboard = () => {
       }
 
       if (person && (record.name || record.userEmail) !== person) return false;
+      if (location && record.location !== location) return false;
 
       if (from || to) {
         const checkedIn = parseFormattedDateTime(record.checkInTime);
@@ -194,7 +247,7 @@ const AdminDashboard = () => {
 
       return true;
     });
-  }, [records, search, person, fromDate, toDate]);
+  }, [records, search, person, location, fromDate, toDate]);
 
   const stats = useMemo(() => {
     const now = new Date();
@@ -249,7 +302,9 @@ const AdminDashboard = () => {
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Team data</h1>
           <p className="text-sm text-slate-500">
-            Every check-in recorded by the sales team, newest first.
+            {hasAllLocations
+              ? 'Every check-in recorded by the sales team, newest first.'
+              : 'Check-ins for the locations you have access to, newest first.'}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -278,6 +333,23 @@ const AdminDashboard = () => {
         <PermissionHelp />
       ) : (
         <>
+          {!hasAllLocations && (
+            <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-3 text-sm">
+              <span className="inline-flex items-center gap-1.5 font-medium text-slate-700">
+                <MapPin className="h-3.5 w-3.5 text-brand-700" aria-hidden="true" />
+                Your access:
+              </span>
+              {allowedLocations.map((name) => (
+                <span
+                  key={name}
+                  className="rounded-md bg-brand-50 px-1.5 py-0.5 text-xs font-medium text-brand-800"
+                >
+                  {name}
+                </span>
+              ))}
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-4">
             <StatCard icon={ClipboardList} label="Visits shown" value={stats.total} />
             <StatCard icon={Timer} label="Currently active" value={stats.active} tone="emerald" />
@@ -287,7 +359,7 @@ const AdminDashboard = () => {
 
           {/* Filters */}
           <div className="card card-pad">
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
               <div className="lg:col-span-2">
                 <label htmlFor="teamSearch" className="label">
                   <Search className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" />
@@ -319,6 +391,28 @@ const AdminDashboard = () => {
                 >
                   <option value="">Everyone</option>
                   {people.map((name) => (
+                    <option key={name} value={name}>
+                      {name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label htmlFor="locationFilter" className="label">
+                  <MapPin className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" />
+                  Location
+                </label>
+                <select
+                  id="locationFilter"
+                  value={location}
+                  onChange={(e) => setLocation(e.target.value)}
+                  className="input"
+                >
+                  <option value="">
+                    {hasAllLocations ? 'All locations' : 'All my locations'}
+                  </option>
+                  {locationOptions.map((name) => (
                     <option key={name} value={name}>
                       {name}
                     </option>

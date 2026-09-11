@@ -26,37 +26,13 @@ import {
 } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import { useToast } from './ui/toast-context';
+import { LOCATIONS } from '../constants/locations';
 import {
   getFormattedDateTime,
   parseFormattedDateTime,
   formatStopwatch,
   shortenAddress,
 } from '../utils/datetime';
-
-const LOCATIONS = [
-  'Alkapuri',
-  'Ambaji',
-  'Becharaji',
-  'Bharuch',
-  'Bhopal',
-  'Canopus',
-  'Daman',
-  'Deoghar',
-  'Digha',
-  'Dwarka',
-  'Goa',
-  'Haldwani',
-  'Haridwar',
-  'Indore',
-  'Jaipur',
-  'Manjusar',
-  'Mussoorie',
-  'Phaltan',
-  'Puri',
-  'Rajkot',
-  'Ranakpur',
-  'Udaipur',
-];
 
 // Reverse geocoding helper (Nominatim).
 async function reverseGeocode(lat, lon) {

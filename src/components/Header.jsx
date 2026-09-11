@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, NavLink, useLocation } from 'react-router-dom';
-import { Clock, History as HistoryIcon, LogOut, Menu, Users, X } from 'lucide-react';
+import { Clock, History as HistoryIcon, LogOut, Menu, ShieldCheck, Users, X } from 'lucide-react';
 
 const BASE_NAV_ITEMS = [
   { to: '/', label: 'Check In/Out', icon: Clock },
@@ -8,6 +8,7 @@ const BASE_NAV_ITEMS = [
 ];
 
 const ADMIN_NAV_ITEM = { to: '/admin', label: 'Team Data', icon: Users };
+const SUPERADMIN_NAV_ITEM = { to: '/users', label: 'Roles', icon: ShieldCheck };
 
 function getInitials(user) {
   const source = user?.displayName || user?.email || '';
@@ -25,10 +26,14 @@ function navLinkClass({ isActive }) {
   ].join(' ');
 }
 
-const Header = ({ user, isAdmin, onLogout }) => {
+const Header = ({ user, isAdmin, isSuperAdmin, onLogout }) => {
   const [menuOpen, setMenuOpen] = useState(false);
   const location = useLocation();
-  const navItems = isAdmin ? [...BASE_NAV_ITEMS, ADMIN_NAV_ITEM] : BASE_NAV_ITEMS;
+  const navItems = [
+    ...BASE_NAV_ITEMS,
+    ...(isAdmin ? [ADMIN_NAV_ITEM] : []),
+    ...(isSuperAdmin ? [SUPERADMIN_NAV_ITEM] : []),
+  ];
 
   // Close the mobile menu whenever the route changes.
   useEffect(() => {
