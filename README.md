@@ -37,6 +37,29 @@ filesystem before applying rewrites, so assets are still served normally. Any
 other host needs the same fallback (Netlify: `/* /index.html 200`; nginx:
 `try_files $uri /index.html`).
 
+## Sign-in
+
+Two providers are supported, both enabled under Firebase → Authentication →
+**Sign-in method**:
+
+- **Email/Password** — with sign-up and a password-reset link.
+- **Google** — "Continue with Google", which works for both new and returning
+  users. It tries a popup first and falls back to a full-page redirect when the
+  popup is blocked, which is common in mobile browsers and in-app webviews.
+
+### Authorized domains
+
+Google sign-in only runs on domains listed under Firebase → Authentication →
+**Settings** → **Authorized domains**. Firebase pre-authorises `localhost`,
+`<project>.firebaseapp.com` and `<project>.web.app`, but **not** custom or
+Vercel hosts — add `check-in-out-system.vercel.app` (and any custom domain)
+there, or Google sign-in fails with `auth/unauthorized-domain`. The login screen
+names that exact fix on screen if it happens.
+
+Google accounts arrive with a `displayName`, so the read-only **Sales person**
+field on the check-in form fills itself in. Admin access is matched on email
+address, so it behaves identically for both providers.
+
 ## Getting the data out
 
 Every salesperson sees only their own visits on **History**. Managers and MIS
