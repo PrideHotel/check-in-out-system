@@ -62,6 +62,18 @@ service cloud.firestore {
         && (isSuperAdmin() || scopedLocations().size() == 0 || location in scopedLocations());
     }
 
+    // Keep in step with src/constants/locations.js. A visit must be logged
+    // against one of these, so free text can never reach the database — and
+    // every record stays visible to the Admins scoped to its location.
+    function isKnownLocation(location) {
+      return location in [
+        'Alkapuri', 'Ambaji', 'Becharaji', 'Bharuch', 'Bhopal', 'Canopus',
+        'Daman', 'Deoghar', 'Digha', 'Dwarka', 'Goa', 'Haldwani', 'Haridwar',
+        'Indore', 'Jaipur', 'Manjusar', 'Mussoorie', 'Phaltan', 'Puri',
+        'Rajkot', 'Ranakpur', 'Udaipur'
+      ];
+    }
+
     function isValidRoleDoc() {
       let incoming = request.resource.data;
       return incoming.get('role', '') in ['admin', 'superadmin']
@@ -79,15 +91,19 @@ service cloud.firestore {
           || canSeeLocation(resource.data.get('location', ''))
         );
 
-      // A record may only be created for yourself, and must start open.
+      // A record may only be created for yourself, must start open, and must
+      // name one of the listed locations.
       allow create: if isSignedIn()
         && request.resource.data.userId == request.auth.uid
-        && request.resource.data.checkOutTime == '';
+        && request.resource.data.checkOutTime == ''
+        && isKnownLocation(request.resource.data.get('location', ''));
 
-      // Only the owner may check out, and the owner may never be reassigned.
+      // Only the owner may check out; neither the owner nor the location may
+      // be changed afterwards.
       allow update: if isSignedIn()
         && resource.data.userId == request.auth.uid
-        && request.resource.data.userId == resource.data.userId;
+        && request.resource.data.userId == resource.data.userId
+        && request.resource.data.get('location', '') == resource.data.get('location', '');
 
       allow delete: if false;
     }

@@ -81,13 +81,22 @@ const CheckInOutForm = () => {
 
   const isBusy = isCheckingIn || isCheckingOut;
 
-  const filteredLocations = useMemo(
-    () =>
-      LOCATIONS.filter((location) =>
-        location.toLowerCase().includes(searchQuery.trim().toLowerCase())
-      ),
-    [searchQuery]
-  );
+  // Latest typed text and committed selection, readable from event listeners
+  // registered once (the outside-click handler) without going stale.
+  const locationStateRef = useRef({ typed: '', selected: '' });
+  locationStateRef.current = { typed: searchQuery, selected: formData.location };
+
+  // A location only counts if it is one of the listed properties.
+  const hasValidLocation = LOCATIONS.includes(formData.location);
+
+  const filteredLocations = useMemo(() => {
+    // Reopening the list after a pick shows every option, not just the one
+    // already chosen.
+    if (searchQuery === formData.location) return LOCATIONS;
+    return LOCATIONS.filter((location) =>
+      location.toLowerCase().includes(searchQuery.trim().toLowerCase())
+    );
+  }, [searchQuery, formData.location]);
 
   const checkExistingCheckIn = useCallback(async () => {
     if (!auth.currentUser) {
@@ -144,19 +153,38 @@ const CheckInOutForm = () => {
     return () => clearInterval(timer);
   }, []);
 
+  // The location is select-only: typing filters the list but never becomes
+  // the value. When the field is left, text that exactly names a location
+  // (in any letter case) is accepted as that location; anything else is
+  // discarded and the field goes back to the last real selection.
+  const commitLocationInput = useCallback(() => {
+    const { typed, selected } = locationStateRef.current;
+    const exact = LOCATIONS.find(
+      (location) => location.toLowerCase() === typed.trim().toLowerCase()
+    );
+
+    setShowDropdown(false);
+    if (exact) {
+      setFormData((prev) => ({ ...prev, location: exact }));
+      setSearchQuery(exact);
+    } else {
+      setSearchQuery(selected);
+    }
+  }, []);
+
   // Close the location dropdown on outside click / Escape.
   useEffect(() => {
     if (!showDropdown) return undefined;
 
     const handleClickOutside = (event) => {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
-        setShowDropdown(false);
+        commitLocationInput();
       }
     };
 
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [showDropdown]);
+  }, [showDropdown, commitLocationInput]);
 
   // Keep the highlighted option scrolled into view while arrowing through the list.
   useEffect(() => {
@@ -176,19 +204,20 @@ const CheckInOutForm = () => {
     setShowDropdown(false);
   };
 
+  const handleLocationSearch = (event) => {
+    setSearchQuery(event.target.value);
+    setShowDropdown(true);
+    setActiveIndex(0);
+  };
+
   const handleInputChange = (e) => {
     const { name, value } = e.target;
-    if (name === 'location') {
-      setSearchQuery(value);
-      setShowDropdown(true);
-      setActiveIndex(0);
-    }
     setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
   const handleLocationKeyDown = (event) => {
     if (event.key === 'Escape') {
-      setShowDropdown(false);
+      commitLocationInput();
       return;
     }
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
@@ -242,7 +271,13 @@ const CheckInOutForm = () => {
   };
 
   const handleCheckIn = async () => {
-    if (!formData.name || !formData.companyName || !formData.location) {
+    if (!hasValidLocation) {
+      toast.error('Choose your location from the list before checking in.', {
+        title: 'Pick a location',
+      });
+      return;
+    }
+    if (!formData.name || !formData.companyName) {
       toast.error('Fill in your location and the company name before checking in.', {
         title: 'Missing details',
       });
@@ -449,18 +484,31 @@ const CheckInOutForm = () => {
                 aria-controls="location-listbox"
                 autoComplete="off"
                 value={searchQuery}
-                onChange={handleInputChange}
+                onChange={handleLocationSearch}
                 onFocus={() => setShowDropdown(true)}
+                // The input keeps focus after a pick, so focus alone would not
+                // reopen the list when it is clicked again.
+                onClick={() => setShowDropdown(true)}
+                onBlur={(event) => {
+                  // Focus moving to the clear button stays inside the field.
+                  if (!dropdownRef.current?.contains(event.relatedTarget)) {
+                    commitLocationInput();
+                  }
+                }}
                 onKeyDown={handleLocationKeyDown}
                 disabled={isCheckedIn || isBusy}
                 className="input input-icon pr-16"
-                placeholder="Search location…"
+                placeholder="Search and pick a location…"
               />
 
               <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center">
                 {searchQuery && !isCheckedIn && !isBusy && (
                   <button
                     type="button"
+                    // Out of the tab order: otherwise Tab from the input lands
+                    // here, which counts as staying in the field, and typed
+                    // text would survive the user leaving.
+                    tabIndex={-1}
                     onClick={clearLocation}
                     className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
                     aria-label="Clear location"
@@ -480,11 +528,17 @@ const CheckInOutForm = () => {
                 <ul
                   id="location-listbox"
                   role="listbox"
+                  // Keep focus in the input while an option is clicked, so the
+                  // blur handler does not discard the text before the pick.
+                  onMouseDown={(event) => event.preventDefault()}
                   className="absolute z-20 mt-2 max-h-60 w-full animate-scale-in overflow-auto rounded-xl border border-slate-200 bg-white p-1 shadow-card-hover"
                 >
                   {filteredLocations.length === 0 && (
                     <li className="px-3 py-6 text-center text-sm text-slate-500">
                       No location matches “{searchQuery}”.
+                      <span className="mt-1 block text-xs text-slate-400">
+                        Only the listed locations can be used.
+                      </span>
                     </li>
                   )}
                   {filteredLocations.map((loc, index) => {
