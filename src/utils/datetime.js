@@ -28,9 +28,15 @@ export function parseFormattedDateTime(value) {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-/** "10-08-2026 14:35:12" -> "10 Aug 2026" (falls back to the raw date part). */
+/** A Date passes through; a "DD-MM-YYYY HH:mm:ss" string is parsed. */
+export function toDate(value) {
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+  return parseFormattedDateTime(value);
+}
+
+/** Date or "10-08-2026 14:35:12" -> "10 Aug 2026" (falls back to the raw date part). */
 export function formatDateLabel(value) {
-  const date = parseFormattedDateTime(value);
+  const date = toDate(value);
   if (!date) return typeof value === 'string' ? value.split(' ')[0] || '—' : '—';
 
   return date.toLocaleDateString('en-GB', {
@@ -40,9 +46,9 @@ export function formatDateLabel(value) {
   });
 }
 
-/** "10-08-2026 14:35:12" -> "14:35". */
+/** Date or "10-08-2026 14:35:12" -> "14:35". */
 export function formatTimeLabel(value) {
-  const date = parseFormattedDateTime(value);
+  const date = toDate(value);
   if (!date) return typeof value === 'string' ? value.split(' ')[1]?.slice(0, 5) || '—' : '—';
 
   const hours = String(date.getHours()).padStart(2, '0');
@@ -75,10 +81,10 @@ export function formatStopwatch(ms) {
   return `${hours}:${minutes}:${seconds}`;
 }
 
-/** Time between a check-in / check-out pair, as a short label. */
+/** Time between a check-in / check-out pair (Dates or strings), as a short label. */
 export function getVisitDuration(checkInTime, checkOutTime) {
-  const start = parseFormattedDateTime(checkInTime);
-  const end = parseFormattedDateTime(checkOutTime);
+  const start = toDate(checkInTime);
+  const end = toDate(checkOutTime);
   if (!start || !end) return null;
 
   return formatDuration(end.getTime() - start.getTime());
