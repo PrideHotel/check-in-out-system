@@ -4,6 +4,10 @@
  * This is the single source of truth for the check-in dropdown and for the
  * per-location permissions a SuperAdmin grants to an Admin, so the two can
  * never drift apart.
+ *
+ * firestore.rules keeps its own copy in `isKnownLocation()` (rules cannot
+ * import from the app). Add or rename a location in both places, then
+ * republish the rules — otherwise check-ins at the new location are refused.
  */
 export const LOCATIONS = [
   'Alkapuri',
