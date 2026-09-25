@@ -159,8 +159,9 @@ next check-in.
 service, with an 8-second timeout; if that fails the address is left blank and
 the coordinates are still there, with a map link in Team Data. Location
 reference points and radii are in `LOCATION_COORDS`
-(`src/constants/locations.js`). They are approximate city centres, and
-**Canopus** has none yet, so its visits are never distance-flagged.
+(`src/constants/locations.js`). They are approximate city centres with a
+generous radius, since salespeople visit clients across the city. A location
+set to `null` is never distance-flagged.
 
 **Forgotten check-outs.** After 10 hours the check-in screen asks whether the
 person forgot. They can check out now, or say when they actually left: that is

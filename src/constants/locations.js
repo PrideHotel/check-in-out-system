@@ -49,11 +49,11 @@ export const LOCATION_COORDS = {
   Becharaji: { lat: 23.4960, lng: 72.0430, radiusKm: 40 },
   Bharuch: { lat: 21.7051, lng: 72.9959, radiusKm: 40 },
   Bhopal: { lat: 23.2599, lng: 77.4126, radiusKm: 40 },
-  Canopus: null, // position not confirmed
+  Canopus: { lat: 21.6210, lng: 87.5022, radiusKm: 40 }, // New Digha, West Bengal 721428
   Daman: { lat: 20.4140, lng: 72.8328, radiusKm: 40 },
   Deoghar: { lat: 24.4820, lng: 86.6960, radiusKm: 40 },
   Digha: { lat: 21.6270, lng: 87.5090, radiusKm: 40 },
-  Dwarka: { lat: 22.2394, lng: 68.9678, radiusKm: 40 }, // Dwarka, Gujarat
+  Dwarka: { lat: 22.2368, lng: 68.9677, radiusKm: 40 }, // Gomti Ghat, Dwarka, Gujarat 361335
   Goa: { lat: 15.4909, lng: 73.8278, radiusKm: 80 }, // the whole state
   Haldwani: { lat: 29.2183, lng: 79.5130, radiusKm: 40 },
   Haridwar: { lat: 29.9457, lng: 78.1642, radiusKm: 40 },
