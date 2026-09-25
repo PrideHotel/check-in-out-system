@@ -17,6 +17,10 @@ rules_version = '2';
 //   - An Admin additionally reads records for the locations granted to them.
 //   - A SuperAdmin reads every record and is the only one who may edit roles.
 //   - Visit history is an audit trail and is never deleted from the client.
+//   - Check-in and check-out times are the server's clock (`request.time`),
+//     never the phone's, so a visit cannot be backdated.
+//   - One open visit per person, enforced with a lock document in `active`
+//     written in the same transaction as the visit.
 
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -62,6 +66,135 @@ service cloud.firestore {
         && (isSuperAdmin() || scopedLocations().size() == 0 || location in scopedLocations());
     }
 
+    // Keep in step with src/constants/locations.js. A visit must be logged
+    // against one of these, so free text can never reach the database — and
+    // every record stays visible to the Admins scoped to its location.
+    function isKnownLocation(location) {
+      return location in [
+        'Alkapuri', 'Ambaji', 'Becharaji', 'Bharuch', 'Bhopal', 'Canopus',
+        'Daman', 'Deoghar', 'Digha', 'Dwarka', 'Goa', 'Haldwani', 'Haridwar',
+        'Indore', 'Jaipur', 'Manjusar', 'Mussoorie', 'Phaltan', 'Puri',
+        'Rajkot', 'Ranakpur', 'Udaipur'
+      ];
+    }
+
+    // How long a visit may stay open before a manager may close it for the
+    // salesperson. Keep in step with FORGOTTEN_AFTER_HOURS in src/utils/visits.js.
+    function forgottenAfter() {
+      return duration.value(10, 'h');
+    }
+
+    function isValidCoords(coords) {
+      return coords is map
+        && coords.keys().hasOnly(['lat', 'lng', 'accuracy'])
+        && coords.lat is number && coords.lat >= -90 && coords.lat <= 90
+        && coords.lng is number && coords.lng >= -180 && coords.lng <= 180
+        && (!('accuracy' in coords) || coords.accuracy is number);
+    }
+
+    function hasValidCoords(data, field) {
+      return !(field in data) || isValidCoords(data[field]);
+    }
+
+    function checkInPath(recordId) {
+      return /databases/$(database)/documents/check-ins/$(recordId);
+    }
+
+    function lockPath(uid) {
+      return /databases/$(database)/documents/active/$(uid);
+    }
+
+    // A new visit: yours, open, at a listed location, stamped with the server's
+    // time, and created together with your lock pointing at it.
+    function isValidNewVisit(recordId) {
+      let incoming = request.resource.data;
+      return incoming.userId == request.auth.uid
+        && incoming.checkOutTime == ''
+        && isKnownLocation(incoming.get('location', ''))
+        && incoming.checkInAt == request.time
+        && !incoming.keys().hasAny([
+          'checkOutAt', 'checkOutCoords', 'reportedCheckOutAt',
+          'lateCheckout', 'closedBy', 'timesBackfilled'
+        ])
+        && hasValidCoords(incoming, 'checkInCoords')
+        && getAfter(lockPath(request.auth.uid)).data.checkInId == recordId;
+    }
+
+    // The salesperson closing their own open visit. Only check-out fields may
+    // change, and the closing time is the server's. A reported leaving time
+    // (for a forgotten check-out) must fall between check-in and now.
+    function isOwnCheckOut() {
+      let before = resource.data;
+      let after = request.resource.data;
+      return before.userId == request.auth.uid
+        && before.checkOutTime == ''
+        && after.diff(before).affectedKeys().hasOnly([
+          'checkOutTime', 'checkOutAdd', 'checkOutAt', 'checkOutCoords',
+          'reportedCheckOutAt', 'lateCheckout'
+        ])
+        && after.checkOutTime is string && after.checkOutTime != ''
+        && after.checkOutAt == request.time
+        && hasValidCoords(after, 'checkOutCoords')
+        && (
+          after.keys().hasAll(['reportedCheckOutAt', 'lateCheckout'])
+            ? after.reportedCheckOutAt is timestamp
+              && after.reportedCheckOutAt <= request.time
+              && (!('checkInAt' in before) || after.reportedCheckOutAt > before.checkInAt)
+              && after.lateCheckout == true
+            : !after.keys().hasAny(['reportedCheckOutAt', 'lateCheckout'])
+        );
+    }
+
+    // A manager closing a forgotten visit at one of their locations, only once
+    // it has been open past the threshold, and signing it with their email.
+    function isManagerClose() {
+      let before = resource.data;
+      let after = request.resource.data;
+      return canSeeLocation(before.get('location', ''))
+        && before.checkOutTime == ''
+        && after.diff(before).affectedKeys().hasOnly([
+          'checkOutTime', 'checkOutAt', 'closedBy', 'lateCheckout'
+        ])
+        && after.checkOutTime is string && after.checkOutTime != ''
+        && after.checkOutAt == request.time
+        && after.closedBy == userEmail()
+        && after.lateCheckout == true
+        && (!('checkInAt' in before) || request.time > before.checkInAt + forgottenAfter());
+    }
+
+    // The one-time upgrade of records written before server timestamps: a
+    // SuperAdmin fills in `checkInAt` / `checkOutAt` from the old text times,
+    // once per record, touching nothing else.
+    function isTimestampBackfill() {
+      let before = resource.data;
+      let after = request.resource.data;
+      return isSuperAdmin()
+        && !('checkInAt' in before)
+        && after.diff(before).affectedKeys().hasOnly(['checkInAt', 'checkOutAt', 'timesBackfilled'])
+        && after.checkInAt is timestamp && after.checkInAt <= request.time
+        && (!('checkOutAt' in after) || after.checkOutAt is timestamp)
+        && after.timesBackfilled == true;
+    }
+
+    // A lock may only be taken together with creating the open visit it
+    // points at — never pointed at some existing record.
+    function isValidLock() {
+      let lock = request.resource.data;
+      return lock.keys().hasOnly(['checkInId', 'since'])
+        && lock.checkInId is string
+        && lock.since == request.time
+        && !exists(checkInPath(lock.checkInId))
+        && getAfter(checkInPath(lock.checkInId)).data.userId == request.auth.uid
+        && getAfter(checkInPath(lock.checkInId)).data.checkOutTime == '';
+    }
+
+    // A lock left behind by a visit that is already closed (for instance one a
+    // manager closed) may be taken over.
+    function lockIsReleased() {
+      let held = checkInPath(resource.data.checkInId);
+      return !exists(held) || get(held).data.get('checkOutTime', '') != '';
+    }
+
     function isValidRoleDoc() {
       let incoming = request.resource.data;
       return incoming.get('role', '') in ['admin', 'superadmin']
@@ -79,15 +212,10 @@ service cloud.firestore {
           || canSeeLocation(resource.data.get('location', ''))
         );
 
-      // A record may only be created for yourself, and must start open.
-      allow create: if isSignedIn()
-        && request.resource.data.userId == request.auth.uid
-        && request.resource.data.checkOutTime == '';
+      allow create: if isSignedIn() && isValidNewVisit(recordId);
 
-      // Only the owner may check out, and the owner may never be reassigned.
       allow update: if isSignedIn()
-        && resource.data.userId == request.auth.uid
-        && request.resource.data.userId == resource.data.userId;
+        && (isOwnCheckOut() || isManagerClose() || isTimestampBackfill());
 
       allow delete: if false;
     }
@@ -103,6 +231,21 @@ service cloud.firestore {
       allow create: if isSuperAdmin() && isValidRoleDoc();
       allow update: if isSuperAdmin() && adminEmail != userEmail() && isValidRoleDoc();
       allow delete: if isSuperAdmin() && adminEmail != userEmail();
+    }
+
+    // One document per person while a visit is open; see isValidNewVisit.
+    match /active/{uid} {
+      allow get: if isSignedIn() && request.auth.uid == uid;
+      allow create: if isSignedIn() && request.auth.uid == uid && isValidLock();
+      allow update: if isSignedIn() && request.auth.uid == uid
+        && isValidLock() && lockIsReleased();
+      allow delete: if isSignedIn() && request.auth.uid == uid;
+    }
+
+    // App-wide bookkeeping, such as whether old records have been upgraded.
+    match /meta/{docId} {
+      allow get: if hasRole();
+      allow write: if isSuperAdmin();
     }
 
     // Anything not matched above is denied.

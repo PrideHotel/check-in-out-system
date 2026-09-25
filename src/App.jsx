@@ -89,6 +89,8 @@ function AppShell() {
                 <AdminDashboard
                   allowedLocations={allowedLocations}
                   hasAllLocations={hasAllLocations}
+                  isSuperAdmin={isSuperAdmin}
+                  user={user}
                 />
               ) : (
                 <Navigate to="/" replace />

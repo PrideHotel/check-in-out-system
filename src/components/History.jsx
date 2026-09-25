@@ -12,18 +12,26 @@ import {
   ClipboardList,
   Clock3,
   Download,
+  ExternalLink,
   MapPin,
   Search,
   Timer,
   X,
 } from 'lucide-react';
 import {
-  parseFormattedDateTime,
   formatDateLabel,
   formatTimeLabel,
-  getVisitDuration,
+  getFormattedDateTime,
   shortenAddress,
 } from '../utils/datetime';
+import {
+  isOpen,
+  mapLink,
+  sortNewestFirst,
+  visitDuration,
+  visitEnd,
+  visitStart,
+} from '../utils/visits';
 import { downloadCsv, exportStamp } from '../utils/csv';
 
 function StatCard({ icon: Icon, label, value, tone = 'brand' }) {
@@ -94,8 +102,40 @@ function EmptyState({ hasFilters, onClear }) {
   );
 }
 
+/** Address when we have one; otherwise a map link to the raw GPS reading. */
+function Place({ record }) {
+  const address = shortenAddress(record.checkInAdd);
+  if (address) return <span title={record.checkInAdd}>{address}</span>;
+  const link = mapLink(record.checkInCoords);
+  if (!link) return <span>—</span>;
+  return (
+    <a
+      href={link}
+      target="_blank"
+      rel="noreferrer"
+      className="inline-flex items-center gap-1 font-medium text-brand-700 hover:text-brand-900"
+    >
+      View on map
+      <ExternalLink className="h-3 w-3" aria-hidden="true" />
+    </a>
+  );
+}
+
+/** "14:35", or "14:35 (reported)" when the time was reported after the fact. */
+function EndTime({ record }) {
+  if (isOpen(record)) return null;
+  return (
+    <>
+      {formatTimeLabel(visitEnd(record))}
+      {record.lateCheckout && (
+        <span className="ml-1 text-[11px] font-normal text-amber-700">(reported)</span>
+      )}
+    </>
+  );
+}
+
 function StatusBadge({ record }) {
-  return record.checkOutTime ? (
+  return !isOpen(record) ? (
     <span className="badge-done">Completed</span>
   ) : (
     <span className="badge-active">
@@ -133,14 +173,7 @@ const History = () => {
           ...docSnap.data(),
         }));
 
-        // Newest visit first.
-        data.sort((a, b) => {
-          const aTime = parseFormattedDateTime(a.checkInTime)?.getTime() ?? 0;
-          const bTime = parseFormattedDateTime(b.checkInTime)?.getTime() ?? 0;
-          return bTime - aTime;
-        });
-
-        setRecords(data);
+        setRecords(sortNewestFirst(data));
       } catch (err) {
         console.error('Error fetching records:', err);
         setError('Failed to load your history. Check your connection and try again.');
@@ -159,28 +192,32 @@ const History = () => {
   };
 
   const filteredRecords = useMemo(() => {
-    // The date input gives YYYY-MM-DD; stored dates are DD-MM-YYYY.
-    const targetDate = dateFilter ? dateFilter.split('-').reverse().join('-') : '';
     const needle = companyFilter.trim().toLowerCase();
+    const sameDay = (date) => {
+      if (!dateFilter) return true;
+      if (!date) return false;
+      const [year, month, day] = dateFilter.split('-').map(Number);
+      return (
+        date.getFullYear() === year && date.getMonth() + 1 === month && date.getDate() === day
+      );
+    };
 
-    return records.filter((record) => {
-      const matchesCompany = (record.companyName || '').toLowerCase().includes(needle);
-      const recordDate = (record.checkInTime || '').split(' ')[0];
-      const matchesDate = targetDate ? recordDate === targetDate : true;
-      return matchesCompany && matchesDate;
-    });
+    return records.filter(
+      (record) =>
+        (record.companyName || '').toLowerCase().includes(needle) && sameDay(visitStart(record))
+    );
   }, [records, companyFilter, dateFilter]);
 
   const stats = useMemo(() => {
     const now = new Date();
     const thisMonth = records.filter((record) => {
-      const date = parseFormattedDateTime(record.checkInTime);
+      const date = visitStart(record);
       return date && date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
     }).length;
 
     return {
       total: records.length,
-      active: records.filter((record) => !record.checkOutTime).length,
+      active: records.filter(isOpen).length,
       thisMonth,
     };
   }, [records]);
@@ -188,15 +225,22 @@ const History = () => {
   const exportCsv = () => {
     downloadCsv(
       `check-in-history-${exportStamp()}.csv`,
-      ['Company', 'Location', 'Check-In', 'Check-Out', 'Duration', 'Check-In Address'],
-      filteredRecords.map((record) => [
-        record.companyName,
-        record.location,
-        record.checkInTime,
-        record.checkOutTime || 'Not checked out',
-        getVisitDuration(record.checkInTime, record.checkOutTime) || '',
-        record.checkInAdd,
-      ])
+      ['Company', 'Location', 'Check-In', 'Check-Out', 'Duration', 'Check-In Address', 'Map'],
+      filteredRecords.map((record) => {
+        const start = visitStart(record);
+        const end = visitEnd(record);
+        return [
+          record.companyName,
+          record.location,
+          start ? getFormattedDateTime(start) : '',
+          isOpen(record)
+            ? 'Not checked out'
+            : `${end ? getFormattedDateTime(end) : ''}${record.lateCheckout ? ' (reported)' : ''}`,
+          visitDuration(record) || '',
+          record.checkInAdd,
+          mapLink(record.checkInCoords),
+        ];
+      })
     );
   };
 
@@ -332,27 +376,27 @@ const History = () => {
                         </span>
                       </td>
                       <td className="whitespace-nowrap px-5 py-4 text-sm text-slate-600">
-                        {formatDateLabel(record.checkInTime)}
+                        {formatDateLabel(visitStart(record))}
                       </td>
                       <td className="whitespace-nowrap px-5 py-4 text-sm">
                         <span className="tabular font-medium text-slate-900">
-                          {formatTimeLabel(record.checkInTime)}
+                          {formatTimeLabel(visitStart(record))}
                         </span>
                         <span className="mx-1.5 text-slate-300">→</span>
                         <span
                           className={`tabular font-medium ${
-                            record.checkOutTime ? 'text-slate-900' : 'text-emerald-600'
+                            isOpen(record) ? 'text-emerald-600' : 'text-slate-900'
                           }`}
                         >
-                          {record.checkOutTime ? formatTimeLabel(record.checkOutTime) : 'ongoing'}
+                          {isOpen(record) ? 'ongoing' : <EndTime record={record} />}
                         </span>
                       </td>
                       <td className="whitespace-nowrap px-5 py-4 text-sm text-slate-600">
-                        {getVisitDuration(record.checkInTime, record.checkOutTime) || '—'}
+                        {visitDuration(record) || '—'}
                       </td>
                       <td className="max-w-xs px-5 py-4 text-sm text-slate-500">
-                        <span className="line-clamp-2" title={record.checkInAdd || ''}>
-                          {shortenAddress(record.checkInAdd) || '—'}
+                        <span className="line-clamp-2">
+                          <Place record={record} />
                         </span>
                       </td>
                     </tr>
@@ -382,28 +426,28 @@ const History = () => {
                     <div>
                       <p className="text-[11px] uppercase tracking-wide text-slate-400">Date</p>
                       <p className="text-sm font-medium text-slate-800">
-                        {formatDateLabel(record.checkInTime)}
+                        {formatDateLabel(visitStart(record))}
                       </p>
                     </div>
                     <div>
                       <p className="text-[11px] uppercase tracking-wide text-slate-400">In / Out</p>
                       <p className="tabular whitespace-nowrap text-sm font-medium text-slate-800">
-                        {formatTimeLabel(record.checkInTime)}–
-                        {record.checkOutTime ? formatTimeLabel(record.checkOutTime) : '…'}
+                        {formatTimeLabel(visitStart(record))}–
+                        {isOpen(record) ? '…' : <EndTime record={record} />}
                       </p>
                     </div>
                     <div>
                       <p className="text-[11px] uppercase tracking-wide text-slate-400">Duration</p>
                       <p className="text-sm font-medium text-slate-800">
-                        {getVisitDuration(record.checkInTime, record.checkOutTime) || '—'}
+                        {visitDuration(record) || '—'}
                       </p>
                     </div>
                   </div>
 
-                  {record.checkInAdd && (
+                  {(record.checkInAdd || record.checkInCoords) && (
                     <p className="flex items-start gap-1.5 text-xs text-slate-500">
                       <MapPin className="mt-0.5 h-3 w-3 shrink-0 text-slate-400" aria-hidden="true" />
-                      <span>{shortenAddress(record.checkInAdd)}</span>
+                      <Place record={record} />
                     </p>
                   )}
                 </li>
