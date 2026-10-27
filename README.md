@@ -198,6 +198,34 @@ from a device set to Indian time, since the old text is read as local time. On
 the Spark plan it can upgrade up to about 20,000 visits a day (the daily write
 limit).
 
+## Testing
+
+```bash
+npm test               # both checks below
+npm run test:rules     # 76 security-rules cases against the Firestore emulator
+npm run test:locations # the app and the rules agree on shared values
+```
+
+**Run `npm run test:rules` before publishing any change to `firestore.rules`.**
+The rules are the only thing standing between a salesperson's phone and the
+database, and a broken rule fails silently: the app still works, it just lets
+something through. Each case is marked allow or deny; the deny cases are the
+ones that matter (backdating a visit, reading a colleague's data, promoting
+yourself to admin, reading another location).
+
+- Needs **Java 11+** installed. The first run downloads the Firestore emulator
+  (about 60 MB) through a pinned `npx firebase-tools`; nothing is installed
+  into the project, so Vercel builds stay fast.
+- Runs entirely locally. It never touches your real Firebase project.
+- `test:locations` catches the easy mistake of adding a location to the app
+  but not to the rules (or the reverse), which would make check-ins at the new
+  location get refused. It also checks every location has reference
+  coordinates and that the 10-hour forgotten-visit threshold matches in both
+  places.
+
+When you change a rule, add or adjust a case in `tests/rules/rules.test.mjs`
+in the same commit.
+
 ## Project structure
 
 ```
@@ -220,6 +248,8 @@ src/
   utils/visits.js            reading a visit: times, duration, flags, distance
   utils/csv.js               CSV building and download
 firestore.rules              security rules — paste into the Firebase console
+tests/                       rules tests and the app/rules consistency check
+firebase.json                emulator and index settings for the tests
 firestore.indexes.json       the composite index Team Data needs
 ```
 
