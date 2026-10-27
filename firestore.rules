@@ -72,7 +72,7 @@ service cloud.firestore {
     function isKnownLocation(location) {
       return location in [
         'Alkapuri', 'Ambaji', 'Becharaji', 'Bharuch', 'Bhopal', 'Canopus',
-        'Daman', 'Deoghar', 'Digha', 'Dwarka', 'Goa', 'Haldwani', 'Haridwar',
+        'Daman', 'Dehradun', 'Deoghar', 'Digha', 'Dwarka', 'Goa', 'Haldwani', 'Haridwar',
         'Indore', 'Jaipur', 'Manjusar', 'Mussoorie', 'Phaltan', 'Puri',
         'Rajkot', 'Ranakpur', 'Udaipur'
       ];

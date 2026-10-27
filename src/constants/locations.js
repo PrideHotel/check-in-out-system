@@ -17,6 +17,7 @@ export const LOCATIONS = [
   'Bhopal',
   'Canopus',
   'Daman',
+  'Dehradun',
   'Deoghar',
   'Digha',
   'Dwarka',
@@ -51,6 +52,7 @@ export const LOCATION_COORDS = {
   Bhopal: { lat: 23.2599, lng: 77.4126, radiusKm: 40 },
   Canopus: { lat: 21.6210, lng: 87.5022, radiusKm: 40 }, // New Digha, West Bengal 721428
   Daman: { lat: 20.4140, lng: 72.8328, radiusKm: 40 },
+  Dehradun: { lat: 30.3256, lng: 78.0437, radiusKm: 40 }, // Uttarakhand
   Deoghar: { lat: 24.4820, lng: 86.6960, radiusKm: 40 },
   Digha: { lat: 21.6270, lng: 87.5090, radiusKm: 40 },
   Dwarka: { lat: 22.2368, lng: 68.9677, radiusKm: 40 }, // Gomti Ghat, Dwarka, Gujarat 361335
