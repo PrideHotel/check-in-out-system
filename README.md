@@ -71,9 +71,34 @@ get the team's data on the **Team Data** screen (`/admin`):
   day from running out as history grows. *All time* reads everything.
 - Search, a per-person filter and a location filter.
 - **Only visits that need attention** — see [Flags](#flags) below.
-- **Export CSV** of exactly the rows on screen, with server times, flags, GPS
-  coordinates and map links. It includes a UTF-8 BOM so it opens straight into
-  Excel.
+- **Export Excel** of exactly the rows on screen, with server times, flags, GPS
+  coordinates and map links — see [Excel exports](#excel-exports) below.
+
+### Excel exports
+
+Both **History** and **Team Data** download a real `.xlsx` file:
+
+- **Dates are real Excel dates** (shown as `dd-mm-yyyy hh:mm`), so they sort
+  and filter correctly, in the same local time the app shows.
+- **Map columns are clickable** "Open map" links to Google Maps.
+- Numbers (distance, clock difference) are numbers, so they can be summed and
+  sorted.
+- The header row is frozen and bold.
+- Text is always stored as text, so a company name that starts with `=` can
+  never run as a formula.
+- For a late check-out, *Check-Out* is the time the salesperson reported
+  leaving, and *Status* says so.
+
+A salesperson's History export has: Company, Location, Check-In, Check-Out,
+Duration, Status, Check-In Address, Check-In Map, Check-Out Address and
+Check-Out Map. Team Data adds the person, email, flags, distance, clock
+difference, who closed it, and the raw GPS coordinates.
+
+The `.xlsx` is written in the browser by
+[`write-excel-file`](https://www.npmjs.com/package/write-excel-file)
+(`src/utils/excel.js`), which is loaded only when someone exports. Two details
+of it are handled there: it converts dates as UTC (corrected, or Indian times
+would appear 5½ hours early), and formulas must not start with `=`.
 
 ### Flags
 
@@ -238,7 +263,7 @@ src/
     Login.jsx                login / sign-up screen
     CheckInOutForm.jsx       check-in & check-out screen
     History.jsx              the signed-in user's own visits
-    AdminDashboard.jsx       team visits within your locations, filters, CSV export
+    AdminDashboard.jsx       team visits within your locations, filters, Excel export
     UserManagement.jsx       SuperAdmin screen for roles and location access
     ui/Toast.jsx             toast notification provider
     ui/toast-context.js      toast context + `useToast` hook
@@ -246,7 +271,7 @@ src/
   constants/locations.js     the property list shared by check-in and permissions
   utils/datetime.js          shared date/time formatting helpers
   utils/visits.js            reading a visit: times, duration, flags, distance
-  utils/csv.js               CSV building and download
+  utils/excel.js             Excel (.xlsx) building and download
 firestore.rules              security rules — paste into the Firebase console
 tests/                       rules tests and the app/rules consistency check
 firebase.json                emulator and index settings for the tests
