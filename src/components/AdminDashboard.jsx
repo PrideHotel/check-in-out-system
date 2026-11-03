@@ -55,8 +55,9 @@ import {
   visitEnd,
   visitFlags,
   visitStart,
+  visitStatus,
 } from '../utils/visits';
-import { downloadCsv, exportStamp } from '../utils/csv';
+import { downloadExcel, exportStamp } from '../utils/excel';
 import { useToast } from './ui/toast-context';
 
 // ---- small pieces -----------------------------------------------------------
@@ -400,6 +401,7 @@ const AdminDashboard = ({ allowedLocations = [], hasAllLocations = true, isSuper
   const [migrated, setMigrated] = useState(true);
   const [upgrading, setUpgrading] = useState(null); // null | { done, total }
   const [closingId, setClosingId] = useState('');
+  const [exporting, setExporting] = useState(false);
 
   // A stable key so the effect re-runs when the grant changes, not on every
   // render of the array prop.
@@ -595,53 +597,49 @@ const AdminDashboard = ({ allowedLocations = [], hasAllLocations = true, isSuper
     }
   };
 
-  const exportCsv = () => {
-    const stamp = (date) => (date ? getFormattedDateTime(date) : '');
-    downloadCsv(
-      `team-check-ins-${fromDate || 'all'}-to-${toDate || exportStamp()}.csv`,
-      [
-        'Sales Person',
-        'Email',
-        'Company',
-        'Location',
-        'Check-In',
-        'Check-Out',
-        'Duration',
-        'Flags',
-        'Distance From Location (km)',
-        'Phone Clock Off By (min)',
-        'Closed By',
-        'Check-In Address',
-        'Check-In GPS',
-        'Check-In Map',
-        'Check-Out Address',
-        'Check-Out GPS',
-      ],
-      filteredRecords.map((record) => {
-        const far = farFromLocation(record);
-        const skew = clockSkewMinutes(record);
-        return [
-          record.name,
-          record.userEmail,
-          record.companyName,
-          record.location,
-          stamp(visitStart(record)),
-          isOpen(record)
-            ? 'Not checked out'
-            : `${stamp(visitEnd(record))}${record.lateCheckout && !record.closedBy ? ' (reported)' : ''}`,
-          visitDuration(record) || '',
-          (flagsById.get(record.id) ?? []).map((flag) => flag.label).join('; '),
-          far ? far.km : '',
-          skew ?? '',
-          record.closedBy || '',
-          record.checkInAdd,
-          formatCoords(record.checkInCoords),
-          mapLink(record.checkInCoords),
-          record.checkOutAdd,
-          formatCoords(record.checkOutCoords),
-        ];
-      })
-    );
+  const exportExcel = async () => {
+    const mapCell = (coords) => {
+      const link = mapLink(coords);
+      return link ? { link, text: 'Open map' } : null;
+    };
+
+    const columns = [
+      { header: 'Sales Person', width: 20, value: (r) => r.name },
+      { header: 'Email', width: 28, value: (r) => r.userEmail },
+      { header: 'Company', width: 28, value: (r) => r.companyName },
+      { header: 'Location', width: 13, value: (r) => r.location },
+      { header: 'Check-In', width: 17, value: (r) => visitStart(r) },
+      { header: 'Check-Out', width: 17, value: (r) => (isOpen(r) ? null : visitEnd(r)) },
+      { header: 'Duration', width: 10, value: (r) => visitDuration(r) },
+      { header: 'Status', width: 22, value: (r) => visitStatus(r) },
+      {
+        header: 'Flags',
+        width: 30,
+        value: (r) => (flagsById.get(r.id) ?? []).map((flag) => flag.label).join('; '),
+      },
+      { header: 'Distance From Location (km)', width: 14, value: (r) => farFromLocation(r)?.km },
+      { header: 'Phone Clock Off By (min)', width: 13, value: (r) => clockSkewMinutes(r) },
+      { header: 'Closed By', width: 26, value: (r) => r.closedBy },
+      { header: 'Check-In Address', width: 50, value: (r) => r.checkInAdd },
+      { header: 'Check-In GPS', width: 20, value: (r) => formatCoords(r.checkInCoords) },
+      { header: 'Check-In Map', width: 13, value: (r) => mapCell(r.checkInCoords) },
+      { header: 'Check-Out Address', width: 50, value: (r) => r.checkOutAdd },
+      { header: 'Check-Out GPS', width: 20, value: (r) => formatCoords(r.checkOutCoords) },
+      { header: 'Check-Out Map', width: 13, value: (r) => mapCell(r.checkOutCoords) },
+    ];
+
+    setExporting(true);
+    try {
+      await downloadExcel(
+        `team-visits-${fromDate || 'all'}-to-${toDate || exportStamp()}.xlsx`,
+        { sheet: 'Team visits', records: filteredRecords, columns }
+      );
+    } catch (err) {
+      console.error('Excel export failed:', err);
+      toast.error('Could not create the Excel file. Please try again.', { title: 'Export failed' });
+    } finally {
+      setExporting(false);
+    }
   };
 
   const rangeLabel =
@@ -673,12 +671,16 @@ const AdminDashboard = ({ allowedLocations = [], hasAllLocations = true, isSuper
           </button>
           <button
             type="button"
-            onClick={exportCsv}
-            disabled={filteredRecords.length === 0}
+            onClick={exportExcel}
+            disabled={filteredRecords.length === 0 || exporting}
             className="btn-primary"
           >
-            <Download className="h-4 w-4" aria-hidden="true" />
-            Export CSV
+            {exporting ? (
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            ) : (
+              <Download className="h-4 w-4" aria-hidden="true" />
+            )}
+            {exporting ? 'Preparing…' : 'Export Excel'}
           </button>
         </div>
       </div>

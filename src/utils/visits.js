@@ -49,6 +49,14 @@ export function isOpen(record) {
   return !record?.checkOutTime;
 }
 
+/** One-line state of a visit, for exports. */
+export function visitStatus(record) {
+  if (isOpen(record)) return 'Open';
+  if (record?.closedBy) return `Closed by ${record.closedBy}`;
+  if (record?.lateCheckout) return 'Completed (check-out time reported later)';
+  return 'Completed';
+}
+
 /** Visit length as a short label, e.g. "1h 24m". */
 export function visitDuration(record) {
   const start = visitStart(record);

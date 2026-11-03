@@ -13,17 +13,13 @@ import {
   Clock3,
   Download,
   ExternalLink,
+  Loader2,
   MapPin,
   Search,
   Timer,
   X,
 } from 'lucide-react';
-import {
-  formatDateLabel,
-  formatTimeLabel,
-  getFormattedDateTime,
-  shortenAddress,
-} from '../utils/datetime';
+import { formatDateLabel, formatTimeLabel, shortenAddress } from '../utils/datetime';
 import {
   isOpen,
   mapLink,
@@ -31,8 +27,10 @@ import {
   visitDuration,
   visitEnd,
   visitStart,
+  visitStatus,
 } from '../utils/visits';
-import { downloadCsv, exportStamp } from '../utils/csv';
+import { downloadExcel, exportStamp } from '../utils/excel';
+import { useToast } from './ui/toast-context';
 
 function StatCard({ icon: Icon, label, value, tone = 'brand' }) {
   const tones = {
@@ -145,6 +143,25 @@ function StatusBadge({ record }) {
   );
 }
 
+/** What a salesperson's own export contains, one entry per Excel column. */
+const HISTORY_EXPORT_COLUMNS = [
+  { header: 'Company', width: 28, value: (r) => r.companyName },
+  { header: 'Location', width: 14, value: (r) => r.location },
+  { header: 'Check-In', width: 17, value: (r) => visitStart(r) },
+  { header: 'Check-Out', width: 17, value: (r) => (isOpen(r) ? null : visitEnd(r)) },
+  { header: 'Duration', width: 10, value: (r) => visitDuration(r) },
+  { header: 'Status', width: 22, value: (r) => visitStatus(r) },
+  { header: 'Check-In Address', width: 50, value: (r) => r.checkInAdd },
+  { header: 'Check-In Map', width: 13, value: (r) => mapCell(r.checkInCoords) },
+  { header: 'Check-Out Address', width: 50, value: (r) => r.checkOutAdd },
+  { header: 'Check-Out Map', width: 13, value: (r) => mapCell(r.checkOutCoords) },
+];
+
+function mapCell(coords) {
+  const link = mapLink(coords);
+  return link ? { link, text: 'Open map' } : null;
+}
+
 const History = () => {
   const auth = getAuth();
   const [records, setRecords] = useState([]);
@@ -152,6 +169,8 @@ const History = () => {
   const [dateFilter, setDateFilter] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(true);
+  const [exporting, setExporting] = useState(false);
+  const toast = useToast();
 
   useEffect(() => {
     const fetchData = async () => {
@@ -222,26 +241,20 @@ const History = () => {
     };
   }, [records]);
 
-  const exportCsv = () => {
-    downloadCsv(
-      `check-in-history-${exportStamp()}.csv`,
-      ['Company', 'Location', 'Check-In', 'Check-Out', 'Duration', 'Check-In Address', 'Map'],
-      filteredRecords.map((record) => {
-        const start = visitStart(record);
-        const end = visitEnd(record);
-        return [
-          record.companyName,
-          record.location,
-          start ? getFormattedDateTime(start) : '',
-          isOpen(record)
-            ? 'Not checked out'
-            : `${end ? getFormattedDateTime(end) : ''}${record.lateCheckout ? ' (reported)' : ''}`,
-          visitDuration(record) || '',
-          record.checkInAdd,
-          mapLink(record.checkInCoords),
-        ];
-      })
-    );
+  const exportExcel = async () => {
+    setExporting(true);
+    try {
+      await downloadExcel(`check-in-history-${exportStamp()}.xlsx`, {
+        sheet: 'My visits',
+        records: filteredRecords,
+        columns: HISTORY_EXPORT_COLUMNS,
+      });
+    } catch (err) {
+      console.error('Excel export failed:', err);
+      toast.error('Could not create the Excel file. Please try again.', { title: 'Export failed' });
+    } finally {
+      setExporting(false);
+    }
   };
 
   return (
@@ -255,12 +268,16 @@ const History = () => {
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={exportCsv}
-            disabled={filteredRecords.length === 0}
+            onClick={exportExcel}
+            disabled={filteredRecords.length === 0 || exporting}
             className="btn-secondary"
           >
-            <Download className="h-4 w-4" aria-hidden="true" />
-            Export CSV
+            {exporting ? (
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            ) : (
+              <Download className="h-4 w-4" aria-hidden="true" />
+            )}
+            {exporting ? 'Preparing…' : 'Export Excel'}
           </button>
           <Link to="/" className="btn-ghost">
             <ArrowLeft className="h-4 w-4" aria-hidden="true" />
