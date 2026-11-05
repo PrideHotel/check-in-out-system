@@ -40,9 +40,16 @@ const GOA = { lat: 15.49, lng: 73.83, accuracy: 20 };
 await testEnv.withSecurityRulesDisabled(async (ctx) => {
   const db = ctx.firestore();
   await setDoc(doc(db, 'admins/mis3@pridehotel.com'), { role: 'superadmin' });
-  await setDoc(doc(db, 'admins/goa.manager@pridehotel.com'), { role: 'admin', locations: ['Goa', 'Daman'] });
-  await setDoc(doc(db, 'admins/national@pridehotel.com'), { role: 'admin', locations: [] });
+  // A team lead responsible for three salespeople, wherever they go.
+  await setDoc(doc(db, 'admins/team.lead@pridehotel.com'), {
+    role: 'admin', salespeople: ['uid_priya', 'uid_neha', 'uid_ravi'],
+  });
+  await setDoc(doc(db, 'admins/national@pridehotel.com'), { role: 'admin', allSalespeople: true });
+  // Old documents from when access was by location: they grant nothing now.
   await setDoc(doc(db, 'admins/legacy@pridehotel.com'), { role: 'admin' });
+  await setDoc(doc(db, 'admins/old.goa@pridehotel.com'), { role: 'admin', locations: ['Goa'] });
+  await setDoc(doc(db, 'users/uid_priya'), { name: 'Priya', email: 'sales.goa@pridehotel.com', lastSeenAt: ago(HOUR) });
+  await setDoc(doc(db, 'users/uid_rajul'), { name: 'Rajul', email: 'sales.indore@pridehotel.com', lastSeenAt: ago(HOUR) });
   await setDoc(doc(db, 'meta/migrations'), { timestampsBackfilled: false });
 
   const closed = (userId, location, at) => ({
@@ -54,6 +61,8 @@ await testEnv.withSecurityRulesDisabled(async (ctx) => {
   await setDoc(doc(db, 'check-ins/r_daman'), closed('uid_priya', 'Daman', ago(47 * HOUR)));
   await setDoc(doc(db, 'check-ins/r_indore'), closed('uid_rajul', 'Indore', ago(46 * HOUR)));
   await setDoc(doc(db, 'check-ins/r_jaipur'), closed('uid_amit', 'Jaipur', ago(45 * HOUR)));
+  // Priya usually works Goa, but this visit was in Indore.
+  await setDoc(doc(db, 'check-ins/r_priya_indore'), closed('uid_priya', 'Indore', ago(44 * HOUR)));
 
   const open = (userId, location, at) => ({
     userId, location, companyName: 'Acme',
@@ -90,9 +99,10 @@ await testEnv.withSecurityRulesDisabled(async (ctx) => {
 // Several email domains on purpose: sign-up is open to any address.
 const as = (uid, email) => testEnv.authenticatedContext(uid, { email }).firestore();
 const superAdmin = as('uid_mis', 'mis3@pridehotel.com');
-const scopedAdmin = as('uid_goa_mgr', 'goa.manager@pridehotel.com');
-const allLocAdmin = as('uid_nat', 'national@pridehotel.com');
+const teamLead = as('uid_lead', 'team.lead@pridehotel.com');
+const allPeopleAdmin = as('uid_nat', 'national@pridehotel.com');
 const legacyAdmin = as('uid_legacy', 'legacy@pridehotel.com');
+const oldGoaAdmin = as('uid_oldgoa', 'old.goa@pridehotel.com');
 const priya = as('uid_priya', 'sales.goa@pridehotel.com');
 const rajul = as('uid_rajul', 'sales.indore@pridehotel.com');
 const tara = as('uid_tara', 'tara@prideresorts.in');
@@ -171,31 +181,60 @@ await check('salesperson lists own records', 'allow', () =>
 await check('anonymous reads anything', 'deny', () => getDoc(doc(anon, 'check-ins/r_goa')));
 
 // ---- location scoping ------------------------------------------------------
-section = 'location scoping';
-const inLocs = (db, locs) => getDocs(query(collection(db, 'check-ins'), where('location', 'in', locs)));
+section = 'salesperson scoping';
+const ofPeople = (db, uids) => getDocs(query(collection(db, 'check-ins'), where('userId', 'in', uids)));
+const ASSIGNED = ['uid_priya', 'uid_neha', 'uid_ravi'];
 await check('SuperAdmin lists every record', 'allow', () => getDocs(collection(superAdmin, 'check-ins')));
-await check('all-locations admin lists every record', 'allow', () => getDocs(collection(allLocAdmin, 'check-ins')));
-await check('legacy admin doc (no locations) lists every record', 'allow', () => getDocs(collection(legacyAdmin, 'check-ins')));
-await check('scoped admin queries own locations', 'allow', () => inLocs(scopedAdmin, ['Goa', 'Daman']));
-await check('scoped admin asks for whole collection', 'deny', () => getDocs(collection(scopedAdmin, 'check-ins')));
-await check('scoped admin queries an ungranted location', 'deny', () => inLocs(scopedAdmin, ['Indore']));
-await check('scoped admin smuggles an extra location in', 'deny', () => inLocs(scopedAdmin, ['Goa', 'Indore']));
-await check('scoped admin reads out-of-scope record by id', 'deny', () => getDoc(doc(scopedAdmin, 'check-ins/r_indore')));
+await check('"all salespeople" admin lists every record', 'allow', () => getDocs(collection(allPeopleAdmin, 'check-ins')));
+await check('team lead queries their assigned salespeople', 'allow', () => ofPeople(teamLead, ASSIGNED));
+await check('team lead queries a subset of them', 'allow', () => ofPeople(teamLead, ['uid_priya']));
+await check('team lead sees an assigned person at ANY location (Priya in Indore)', 'allow', () =>
+  getDoc(doc(teamLead, 'check-ins/r_priya_indore')));
+await check("team lead reads an unassigned person's visit at the same location", 'deny', () =>
+  getDoc(doc(teamLead, 'check-ins/r_indore')));
+await check('team lead asks for the whole collection', 'deny', () => getDocs(collection(teamLead, 'check-ins')));
+await check('team lead queries an unassigned salesperson', 'deny', () => ofPeople(teamLead, ['uid_rajul']));
+await check('team lead smuggles an extra person into the filter', 'deny', () =>
+  ofPeople(teamLead, ['uid_priya', 'uid_rajul']));
+await check('team lead filters by location instead of person', 'deny', () =>
+  getDocs(query(collection(teamLead, 'check-ins'), where('location', 'in', ['Goa']))));
+await check('admin with no assignment sees nobody', 'deny', () => ofPeople(legacyAdmin, ['uid_priya']));
+await check('old location-based admin no longer sees that location', 'deny', () =>
+  getDocs(query(collection(oldGoaAdmin, 'check-ins'), where('location', 'in', ['Goa']))));
+await check('old location-based admin reads a visit there by id', 'deny', () =>
+  getDoc(doc(oldGoaAdmin, 'check-ins/r_goa')));
 
 // ---- date-range loading ----------------------------------------------------
 section = 'date-range loading';
-const range = (db, locs) => {
+const range = (db, uids) => {
   const parts = [
     where('checkInAt', '>=', ago(30 * 24 * HOUR)),
     where('checkInAt', '<=', ahead(HOUR)),
     orderBy('checkInAt', 'desc'),
   ];
-  if (locs) parts.unshift(where('location', 'in', locs));
+  if (uids) parts.unshift(where('userId', 'in', uids));
   return getDocs(query(collection(db, 'check-ins'), ...parts));
 };
 await check('SuperAdmin loads a 30-day range', 'allow', () => range(superAdmin));
-await check('scoped admin loads a 30-day range for own locations', 'allow', () => range(scopedAdmin, ['Goa', 'Daman']));
-await check('scoped admin loads a 30-day range without location filter', 'deny', () => range(scopedAdmin));
+await check('team lead loads a 30-day range for their salespeople', 'allow', () => range(teamLead, ASSIGNED));
+await check('team lead loads a 30-day range without the person filter', 'deny', () => range(teamLead));
+
+// ---- salesperson profiles --------------------------------------------------
+section = 'salesperson profiles';
+const profile = (db, uid, data = {}) =>
+  setDoc(doc(db, 'users', uid), { name: 'Priya Nair', email: 'sales.goa@pridehotel.com', lastSeenAt: serverTimestamp(), ...data });
+await check('saving your own profile on sign-in', 'allow', () => profile(priya, 'uid_priya'));
+await check("writing someone else's profile", 'deny', () => profile(priya, 'uid_rajul'));
+await check('profile claiming a different email', 'deny', () =>
+  profile(priya, 'uid_priya', { email: 'boss@pridehotel.com' }));
+await check('profile with an extra field (e.g. a role)', 'deny', () =>
+  profile(priya, 'uid_priya', { role: 'superadmin' }));
+await check('profile with a made-up timestamp', 'deny', () => profile(priya, 'uid_priya', { lastSeenAt: ago(HOUR) }));
+await check('SuperAdmin lists all profiles (to assign people)', 'allow', () => getDocs(collection(superAdmin, 'users')));
+await check('team lead lists all profiles', 'deny', () => getDocs(collection(teamLead, 'users')));
+await check("team lead reads an assigned person's profile", 'allow', () => getDoc(doc(teamLead, 'users/uid_priya')));
+await check("team lead reads an unassigned person's profile", 'deny', () => getDoc(doc(teamLead, 'users/uid_rajul')));
+await check("salesperson reads a colleague's profile", 'deny', () => getDoc(doc(priya, 'users/uid_rajul')));
 
 // ---- check-in: server time, lock, location ---------------------------------
 section = 'check-in';
@@ -282,16 +321,16 @@ await check('marking late without saying when you left', 'deny', () =>
   updateDoc(doc(sunil4, 'check-ins/late_4'), {
     checkOutTime: 'x', checkOutAt: serverTimestamp(), lateCheckout: true,
   }));
-await check('scoped admin closes a stale visit at their location', 'allow', () =>
-  managerClose(scopedAdmin, 'stale_goa', 'goa.manager@pridehotel.com'));
-await check('scoped admin closes a visit open only 2 hours', 'deny', () =>
-  managerClose(scopedAdmin, 'fresh_goa', 'goa.manager@pridehotel.com'));
-await check('scoped admin closes a stale visit outside their locations', 'deny', () =>
-  managerClose(scopedAdmin, 'stale_indore', 'goa.manager@pridehotel.com'));
+await check('team lead closes a stale visit of an assigned salesperson', 'allow', () =>
+  managerClose(teamLead, 'stale_goa', 'team.lead@pridehotel.com'));
+await check('team lead closes a visit open only 2 hours', 'deny', () =>
+  managerClose(teamLead, 'fresh_goa', 'team.lead@pridehotel.com'));
+await check("team lead closes an unassigned person's stale visit", 'deny', () =>
+  managerClose(teamLead, 'stale_indore', 'team.lead@pridehotel.com'));
 await check("manager close signed with someone else's email", 'deny', () =>
-  managerClose(allLocAdmin, 'stale_indore', 'mis3@pridehotel.com'));
+  managerClose(allPeopleAdmin, 'stale_indore', 'mis3@pridehotel.com'));
 await check('manager close that also edits the company', 'deny', () =>
-  managerClose(allLocAdmin, 'stale_indore', 'national@pridehotel.com', { companyName: 'X' }));
+  managerClose(allPeopleAdmin, 'stale_indore', 'national@pridehotel.com', { companyName: 'X' }));
 await check("salesperson closes someone else's stale visit", 'deny', () =>
   managerClose(priya, 'stale_jaipur', 'sales.goa@pridehotel.com'));
 await check('SuperAdmin closes a stale visit anywhere', 'allow', () =>
@@ -312,14 +351,14 @@ await check('upgrade that also edits the company', 'deny', () =>
   backfill(superAdmin, 'legacy_closed2', { companyName: 'X' }));
 await check('upgrade setting a time in the future', 'deny', () =>
   backfill(superAdmin, 'legacy_closed2', { checkInAt: ahead(24 * HOUR) }));
-await check('plain admin upgrades an old record', 'deny', () => backfill(allLocAdmin, 'legacy_closed3'));
+await check('plain admin upgrades an old record', 'deny', () => backfill(allPeopleAdmin, 'legacy_closed3'));
 await check('salesperson upgrades their own old record', 'deny', () => backfill(meera, 'legacy_closed3'));
-await check('admin reads the migration status', 'allow', () => getDoc(doc(scopedAdmin, 'meta/migrations')));
+await check('admin reads the migration status', 'allow', () => getDoc(doc(teamLead, 'meta/migrations')));
 await check('salesperson reads the migration status', 'deny', () => getDoc(doc(priya, 'meta/migrations')));
 await check('SuperAdmin records the migration as done', 'allow', () =>
   setDoc(doc(superAdmin, 'meta/migrations'), { timestampsBackfilled: true }));
 await check('plain admin records the migration as done', 'deny', () =>
-  setDoc(doc(allLocAdmin, 'meta/migrations'), { timestampsBackfilled: true }));
+  setDoc(doc(allPeopleAdmin, 'meta/migrations'), { timestampsBackfilled: true }));
 
 // ---- history is permanent --------------------------------------------------
 section = 'audit trail';
@@ -329,14 +368,24 @@ await check('nobody can delete visit history (SuperAdmin)', 'deny', () => delete
 // ---- role management -------------------------------------------------------
 section = 'roles';
 await check('SuperAdmin lists roles', 'allow', () => getDocs(collection(superAdmin, 'admins')));
-await check('plain admin lists roles', 'deny', () => getDocs(collection(scopedAdmin, 'admins')));
-await check('anyone reads own role', 'allow', () => getDoc(doc(scopedAdmin, 'admins/goa.manager@pridehotel.com')));
+await check('plain admin lists roles', 'deny', () => getDocs(collection(teamLead, 'admins')));
+await check('anyone reads own role', 'allow', () => getDoc(doc(teamLead, 'admins/team.lead@pridehotel.com')));
 await check('SuperAdmin grants a role', 'allow', () =>
-  setDoc(doc(superAdmin, 'admins/new@prideresorts.in'), { role: 'admin', locations: ['Jaipur'] }));
+  setDoc(doc(superAdmin, 'admins/new@prideresorts.in'), { role: 'admin', salespeople: ['uid_amit'] }));
+await check('SuperAdmin grants an "all salespeople" Admin', 'allow', () =>
+  setDoc(doc(superAdmin, 'admins/all@prideresorts.in'), { role: 'admin', allSalespeople: true }));
+await check('role saved with the old location field', 'deny', () =>
+  setDoc(doc(superAdmin, 'admins/old@prideresorts.in'), { role: 'admin', locations: ['Goa'] }));
+await check('role with a non-list of salespeople', 'deny', () =>
+  setDoc(doc(superAdmin, 'admins/odd@prideresorts.in'), { role: 'admin', salespeople: 'uid_amit' }));
 await check('plain admin promotes themselves', 'deny', () =>
-  setDoc(doc(scopedAdmin, 'admins/goa.manager@pridehotel.com'), { role: 'superadmin' }));
+  setDoc(doc(teamLead, 'admins/team.lead@pridehotel.com'), { role: 'superadmin' }));
+await check('plain admin assigns themselves more salespeople', 'deny', () =>
+  setDoc(doc(teamLead, 'admins/team.lead@pridehotel.com'), {
+    role: 'admin', salespeople: ['uid_priya', 'uid_neha', 'uid_ravi', 'uid_rajul'],
+  }));
 await check('SuperAdmin demotes themselves (lockout guard)', 'deny', () =>
-  setDoc(doc(superAdmin, 'admins/mis3@pridehotel.com'), { role: 'admin', locations: [] }));
+  setDoc(doc(superAdmin, 'admins/mis3@pridehotel.com'), { role: 'admin', allSalespeople: true }));
 await check('SuperAdmin writes an invalid role', 'deny', () =>
   setDoc(doc(superAdmin, 'admins/bogus@x.com'), { role: 'owner' }));
 

@@ -4,7 +4,7 @@
       "collectionGroup": "check-ins",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "location", "order": "ASCENDING" },
+        { "fieldPath": "userId", "order": "ASCENDING" },
         { "fieldPath": "checkInAt", "order": "DESCENDING" }
       ]
     }

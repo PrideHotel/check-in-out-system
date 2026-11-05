@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { getAuth, onAuthStateChanged, signOut } from 'firebase/auth';
 import { Loader2 } from 'lucide-react';
-import './firebase.js';
+import { doc, serverTimestamp, setDoc } from 'firebase/firestore';
+import { db } from './firebase.js';
 import CheckInOutForm from './components/CheckInOutForm';
 import Login from './components/Login';
 import History from './components/History';
@@ -12,6 +13,7 @@ import Header from './components/Header';
 import { ToastProvider } from './components/ui/Toast';
 import { useToast } from './components/ui/toast-context';
 import { useAdminAccess } from './hooks/useAdminAccess';
+import UpdateBanner from './components/UpdateBanner';
 
 function SplashScreen() {
   return (
@@ -39,10 +41,22 @@ function AppShell() {
   const {
     isAdmin,
     isSuperAdmin,
-    locations: allowedLocations,
-    hasAllLocations,
+    salespeople: allowedSalespeople,
+    hasAllSalespeople,
     checking: roleChecking,
   } = useAdminAccess(user);
+
+  // Keep each person's name and email in `users/{uid}`, so a SuperAdmin can
+  // pick salespeople by name when assigning them to an Admin. Best-effort:
+  // if it fails (say, the rules are not published yet) nothing else is affected.
+  useEffect(() => {
+    if (!user?.uid) return;
+    setDoc(
+      doc(db, 'users', user.uid),
+      { name: user.displayName || '', email: user.email || '', lastSeenAt: serverTimestamp() },
+      { merge: true }
+    ).catch((error) => console.warn('Could not save the user profile:', error));
+  }, [user]);
 
   // Keep the session across reloads instead of dropping back to the login screen.
   useEffect(() => {
@@ -69,6 +83,7 @@ function AppShell() {
   return (
     <div className="app-backdrop flex min-h-screen flex-col bg-slate-100">
       <Header user={user} isAdmin={isAdmin} isSuperAdmin={isSuperAdmin} onLogout={handleLogout} />
+      <UpdateBanner />
 
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:py-10">
         <Routes>
@@ -87,8 +102,8 @@ function AppShell() {
                 <SplashScreen />
               ) : isAdmin ? (
                 <AdminDashboard
-                  allowedLocations={allowedLocations}
-                  hasAllLocations={hasAllLocations}
+                  allowedSalespeople={allowedSalespeople}
+                  hasAllSalespeople={hasAllSalespeople}
                   isSuperAdmin={isSuperAdmin}
                   user={user}
                 />
