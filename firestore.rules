@@ -8,13 +8,18 @@ rules_version = '2';
 // Roles live in the `admins` collection, one document per person keyed by
 // lower-cased email address:
 //
-//   { role: 'superadmin' }                          every location, manages roles
-//   { role: 'admin', locations: ['Goa', 'Indore'] } those locations only
-//   { role: 'admin', locations: [] }                every location
+//   { role: 'superadmin' }                             everyone, manages roles
+//   { role: 'admin', salespeople: ['uid1', 'uid2'] }   those salespeople only
+//   { role: 'admin', allSalespeople: true }            every salesperson
+//
+// Access is by PERSON: an Admin sees every visit of the salespeople assigned
+// to them, at whatever location. An Admin with neither field (including old
+// documents from when access was by location) sees nobody until reassigned.
 //
 // Model:
 //   - A salesperson reads and writes only their own check-in records.
-//   - An Admin additionally reads records for the locations granted to them.
+//   - An Admin additionally reads the records of the salespeople assigned to
+//     them (by Firebase user ID).
 //   - A SuperAdmin reads every record and is the only one who may edit roles.
 //   - Visit history is an audit trail and is never deleted from the client.
 //   - Check-in and check-out times are the server's clock (`request.time`),
@@ -55,20 +60,20 @@ service cloud.firestore {
       return hasRole() && roleData().get('role', 'admin') == 'superadmin';
     }
 
-    // Missing or empty means unrestricted, so admins created before location
-    // scoping existed keep working.
-    function scopedLocations() {
-      return roleData().get('locations', []);
-    }
-
-    function canSeeLocation(location) {
+    // Whether the signed-in manager may see this salesperson's data. Nothing
+    // is assumed: no assignment means no access.
+    function canSeeSalesperson(userId) {
       return hasRole()
-        && (isSuperAdmin() || scopedLocations().size() == 0 || location in scopedLocations());
+        && (
+          isSuperAdmin()
+          || roleData().get('allSalespeople', false) == true
+          || userId in roleData().get('salespeople', [])
+        );
     }
 
     // Keep in step with src/constants/locations.js. A visit must be logged
-    // against one of these, so free text can never reach the database — and
-    // every record stays visible to the Admins scoped to its location.
+    // against one of these, so free text can never reach the database and
+    // reports always group cleanly by location.
     function isKnownLocation(location) {
       return location in [
         'Alkapuri', 'Ambaji', 'Becharaji', 'Bharuch', 'Bhopal', 'Canopus',
@@ -145,12 +150,12 @@ service cloud.firestore {
         );
     }
 
-    // A manager closing a forgotten visit at one of their locations, only once
-    // it has been open past the threshold, and signing it with their email.
+    // A manager closing a forgotten visit of one of their salespeople, only
+    // once it has been open past the threshold, and signing it with their email.
     function isManagerClose() {
       let before = resource.data;
       let after = request.resource.data;
-      return canSeeLocation(before.get('location', ''))
+      return canSeeSalesperson(before.get('userId', ''))
         && before.checkOutTime == ''
         && after.diff(before).affectedKeys().hasOnly([
           'checkOutTime', 'checkOutAt', 'closedBy', 'lateCheckout'
@@ -197,19 +202,21 @@ service cloud.firestore {
 
     function isValidRoleDoc() {
       let incoming = request.resource.data;
-      return incoming.get('role', '') in ['admin', 'superadmin']
-        && incoming.get('locations', []) is list
-        && incoming.get('locations', []).size() <= 200;
+      return incoming.keys().hasOnly(['role', 'salespeople', 'allSalespeople'])
+        && incoming.get('role', '') in ['admin', 'superadmin']
+        && incoming.get('salespeople', []) is list
+        && incoming.get('salespeople', []).size() <= 500
+        && incoming.get('allSalespeople', false) is bool;
     }
 
     match /check-ins/{recordId} {
-      // Own records always. Managers get everything their locations cover —
-      // which means a scoped Admin must send a location-filtered query, or
-      // Firestore rejects the read for the records outside their scope.
+      // Own records always. Managers get every record of their assigned
+      // salespeople — which means an Admin limited to certain people must
+      // send a `userId in [...]` query, or Firestore rejects the whole read.
       allow read: if isSignedIn()
         && (
           resource.data.userId == request.auth.uid
-          || canSeeLocation(resource.data.get('location', ''))
+          || canSeeSalesperson(resource.data.get('userId', ''))
         );
 
       allow create: if isSignedIn() && isValidNewVisit(recordId);
@@ -231,6 +238,20 @@ service cloud.firestore {
       allow create: if isSuperAdmin() && isValidRoleDoc();
       allow update: if isSuperAdmin() && adminEmail != userEmail() && isValidRoleDoc();
       allow delete: if isSuperAdmin() && adminEmail != userEmail();
+    }
+
+    // Each user's name and email, so a SuperAdmin can pick salespeople by name
+    // when assigning them. Written by the app on sign-in, by the user only.
+    match /users/{uid} {
+      allow get: if isSignedIn()
+        && (request.auth.uid == uid || canSeeSalesperson(uid));
+      allow list: if isSuperAdmin();
+      allow create, update: if isSignedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['name', 'email', 'lastSeenAt'])
+        && request.resource.data.get('name', '') is string
+        && request.resource.data.get('email', '') == request.auth.token.get('email', '')
+        && request.resource.data.lastSeenAt == request.time;
+      allow delete: if false;
     }
 
     // One document per person while a visit is open; see isValidNewVisit.

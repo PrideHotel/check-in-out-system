@@ -119,25 +119,37 @@ There are three levels, all keyed off the signed-in email address:
 | Role | Sees | Can manage roles |
 |---|---|---|
 | Salesperson (no role document) | Only their own visits, on **History** | No |
-| **Admin** | **Team Data** for the locations granted to them | No |
-| **SuperAdmin** | **Team Data** for every location | Yes — the **Roles** screen |
+| **Admin** | **Team Data** for the salespeople assigned to them — every visit, at any location | No |
+| **SuperAdmin** | **Team Data** for everyone | Yes — the **Roles** screen |
+
+**Access is by person, not location.** On the **Roles** screen a SuperAdmin
+picks an Admin's salespeople by name (searchable by name, email or ID), or
+chooses **All salespeople**. The Admin then sees all of those people's visits,
+wherever they happen.
 
 Roles live in the `admins` collection, one document per person whose **ID is
-their lower-cased email address**:
+their lower-cased email address**. Salespeople are stored by their Firebase
+user ID (the `userId` on every check-in):
 
 ```jsonc
 // admins/mis3@pridehotel.com
 { "role": "superadmin" }
 
-// admins/goa.manager@pridehotel.com — Goa and Daman only
-{ "role": "admin", "locations": ["Goa", "Daman"] }
+// admins/team.lead@pridehotel.com — two salespeople, at any location
+{ "role": "admin", "salespeople": ["Q8xrSpHcBTFo…", "LkTBDKexQmIo…"] }
 
-// admins/national@pridehotel.com — every location
-{ "role": "admin", "locations": [] }
+// admins/national@pridehotel.com — every salesperson
+{ "role": "admin", "allSalespeople": true }
 ```
 
-An empty or missing `locations` array means every location, so admins created
-before location scoping keep working unchanged.
+An Admin with neither field sees **nobody** — nothing is assumed. That includes
+Admins set up under the old location-based access (`"locations": [...]`): the
+Roles screen flags them as *Needs reassigning*, and saving them replaces the old
+field.
+
+**Who appears in the picker.** The app saves each person's name and email to
+`users/{uid}` whenever they sign in; anyone who has checked in before is listed
+too. Someone who has never signed in won't appear until they do.
 
 ### First-time setup
 
@@ -152,12 +164,14 @@ inside the app:
 
 From then on, a SuperAdmin adds and edits everyone else on the **Roles** screen.
 
-### How location scoping is enforced
+### How access is enforced
 
-The rules — not the UI — decide what a manager can read. A scoped Admin's read
-is rejected for any record outside their locations, so the app sends a
-`where('location', 'in', [...])` query matching the grant. Editing the request
-in the browser cannot widen it: asking for everything fails the whole read.
+The rules — not the UI — decide what a manager can read. An Admin's read is
+rejected for any record whose `userId` isn't one of their salespeople, so the
+app sends a `where('userId', 'in', [...])` query matching the assignment.
+Editing the request in the browser cannot widen it: asking for everything, or
+for someone else, fails the whole read. An Admin can also read the `users`
+profile of only their own salespeople, and only a SuperAdmin can list everyone.
 
 A SuperAdmin cannot change or delete **their own** role document, in the app or
 through the rules. That stops the last SuperAdmin locking everyone out of role
@@ -192,7 +206,7 @@ set to `null` is never distance-flagged.
 person forgot. They can check out now, or say when they actually left: that is
 stored as `reportedCheckOutAt` with `lateCheckout: true`, alongside the real
 closing time, and no GPS is taken. A manager can also close a visit that has
-been open for 10+ hours at a location they manage; it is signed with
+been open for 10+ hours by one of their salespeople; it is signed with
 `closedBy`. The 10 hours is enforced by the rules as well
 (`forgottenAfter()`), so keep the two values in step.
 
@@ -202,17 +216,27 @@ The app and `firestore.rules` depend on each other, so publish them together:
 
 1. Merge to `main`; wait for Vercel to finish deploying (about a minute).
 2. **Immediately** publish `firestore.rules` in the Firebase console.
-3. Ask anyone with the app already open to refresh.
+3. Anyone with the app already open sees a **"A new version of the app is
+   available — Refresh now"** bar within a few minutes (it checks when the tab
+   regains focus, and every 15 minutes). Tabs opened before this feature
+   existed need one manual refresh.
+
+**Old versions in a browser.** A single-page app keeps running the version it
+loaded until the page is reloaded, so an old tab can show old buttons. The
+refresh bar fixes that from now on. Vercel *preview* links (the per-PR
+addresses) are frozen at the version they were built from forever, so share and
+bookmark only `https://check-in-out-system.vercel.app`.
 
 Between steps 1 and 2 check-ins fail, so do them back to back, ideally outside
 working hours.
 
-**Composite index.** A location-limited Admin's Team Data query needs one
-index, defined in [`firestore.indexes.json`](./firestore.indexes.json)
-(`check-ins`: `location` ascending, `checkInAt` descending). Create it under
-Firestore → **Indexes** → **Composite** → **Add index**, or just open Team Data
-as such an Admin: the screen shows a **Create the index** button linking to the
-pre-filled form. It takes a few minutes to build.
+**Composite index.** An Admin assigned specific salespeople needs one index,
+defined in [`firestore.indexes.json`](./firestore.indexes.json) (`check-ins`:
+`userId` ascending, `checkInAt` descending). Create it under Firestore →
+**Indexes** → **Add index**, or just open Team Data as such an Admin: the screen
+shows a **Create the index** button linking to the pre-filled form. It takes a
+few minutes to build. The older `location` + `checkInAt` index is no longer used
+and can be deleted.
 
 **Upgrading older visits (once).** Visits recorded before server timestamps
 have no `checkInAt`, so date ranges miss them (*All time* still shows them).
@@ -236,7 +260,7 @@ The rules are the only thing standing between a salesperson's phone and the
 database, and a broken rule fails silently: the app still works, it just lets
 something through. Each case is marked allow or deny; the deny cases are the
 ones that matter (backdating a visit, reading a colleague's data, promoting
-yourself to admin, reading another location).
+yourself to admin, an Admin reading a salesperson not assigned to them).
 
 - Needs **Java 11+** installed. The first run downloads the Firestore emulator
   (about 60 MB) through a pinned `npx firebase-tools`; nothing is installed
@@ -263,11 +287,12 @@ src/
     Login.jsx                login / sign-up screen
     CheckInOutForm.jsx       check-in & check-out screen
     History.jsx              the signed-in user's own visits
-    AdminDashboard.jsx       team visits within your locations, filters, Excel export
-    UserManagement.jsx       SuperAdmin screen for roles and location access
+    AdminDashboard.jsx       visits of your assigned salespeople, filters, Excel export
+    UserManagement.jsx       SuperAdmin screen: roles and which salespeople each Admin sees
+    UpdateBanner.jsx         "new version available — refresh" bar for stale tabs
     ui/Toast.jsx             toast notification provider
     ui/toast-context.js      toast context + `useToast` hook
-  hooks/useAdminAccess.js    resolves the user's role and location scope
+  hooks/useAdminAccess.js    resolves the user's role and assigned salespeople
   constants/locations.js     the property list shared by check-in and permissions
   utils/datetime.js          shared date/time formatting helpers
   utils/visits.js            reading a visit: times, duration, flags, distance

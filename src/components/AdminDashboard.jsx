@@ -141,13 +141,13 @@ function PermissionHelp() {
   );
 }
 
-/** Firestore needs a one-time index for location + date queries. */
+/** Firestore needs a one-time index for salesperson + date queries. */
 function IndexHelp({ link }) {
   return (
     <HelpCard icon={DatabaseZap} title="Firestore needs a one-time index for this view">
       <p>
-        Loading your locations for a date range needs a database index. It is created once and
-        then works for everyone.
+        Loading your salespeople&apos;s visits for a date range needs a database index. It is created
+        once and then works for everyone.
       </p>
       {link ? (
         <p>
@@ -300,22 +300,24 @@ function indexLinkFrom(error) {
  * The date range is applied by Firestore, so only the visits in it are read
  * (and billed) — not the whole history. "All time" leaves the range off.
  *
- * The security rules reject any document outside a scoped Admin's locations,
- * so such an Admin must also send a location filter; asking for everything
- * would fail the whole read rather than quietly returning less.
+ * Access is by person: an Admin sees every visit of the salespeople assigned
+ * to them, at any location. The security rules reject any document of
+ * someone else, so such an Admin must send a `userId in [...]` filter;
+ * asking for everything would fail the whole read rather than quietly
+ * returning less.
  */
-async function fetchVisibleRecords({ hasAllLocations, allowedLocations, from, to }) {
+async function fetchVisibleRecords({ hasAllSalespeople, allowedSalespeople, from, to }) {
   const dateConstraints = [];
   if (from) dateConstraints.push(where('checkInAt', '>=', Timestamp.fromDate(new Date(`${from}T00:00:00`))));
   if (to) dateConstraints.push(where('checkInAt', '<=', Timestamp.fromDate(new Date(`${to}T23:59:59.999`))));
   if (dateConstraints.length) dateConstraints.push(orderBy('checkInAt', 'desc'));
 
   const base = collection(db, 'check-ins');
-  const snapshots = hasAllLocations
+  const snapshots = hasAllSalespeople
     ? [await getDocs(query(base, ...dateConstraints))]
     : await Promise.all(
-        chunk(allowedLocations, IN_FILTER_LIMIT).map((group) =>
-          getDocs(query(base, where('location', 'in', group), ...dateConstraints))
+        chunk(allowedSalespeople, IN_FILTER_LIMIT).map((group) =>
+          getDocs(query(base, where('userId', 'in', group), ...dateConstraints))
         )
       );
 
@@ -379,7 +381,12 @@ async function upgradeOldRecords(onProgress) {
 
 // ---- screen -----------------------------------------------------------------
 
-const AdminDashboard = ({ allowedLocations = [], hasAllLocations = true, isSuperAdmin = false, user }) => {
+const AdminDashboard = ({
+  allowedSalespeople = [],
+  hasAllSalespeople = false,
+  isSuperAdmin = false,
+  user,
+}) => {
   const toast = useToast();
   const [records, setRecords] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -405,7 +412,11 @@ const AdminDashboard = ({ allowedLocations = [], hasAllLocations = true, isSuper
 
   // A stable key so the effect re-runs when the grant changes, not on every
   // render of the array prop.
-  const scopeKey = hasAllLocations ? '*' : [...allowedLocations].sort().join('|');
+  const scopeKey = hasAllSalespeople ? '*' : [...allowedSalespeople].sort().join('|');
+  const noneAssigned = !hasAllSalespeople && allowedSalespeople.length === 0;
+
+  // Names of the people this Admin looks after, for the "Your salespeople" line.
+  const [assignedNames, setAssignedNames] = useState({});
 
   useEffect(() => {
     let cancelled = false;
@@ -416,10 +427,17 @@ const AdminDashboard = ({ allowedLocations = [], hasAllLocations = true, isSuper
       setPermissionDenied(false);
       setIndexLink(null);
 
+      // Nobody assigned: there is nothing this Admin may read, so don't ask.
+      if (noneAssigned) {
+        setRecords([]);
+        setIsLoading(false);
+        return;
+      }
+
       try {
         const data = await fetchVisibleRecords({
-          hasAllLocations,
-          allowedLocations,
+          hasAllSalespeople,
+          allowedSalespeople,
           from: fromDate,
           to: toDate,
         });
@@ -485,12 +503,49 @@ const AdminDashboard = ({ allowedLocations = [], hasAllLocations = true, isSuper
     return [...names].sort((a, b) => a.localeCompare(b));
   }, [records]);
 
-  // Only offer locations the manager can actually see.
-  const locationOptions = useMemo(() => {
-    const seen = new Set(records.map((record) => record.location).filter(Boolean));
-    const permitted = hasAllLocations ? [...seen] : allowedLocations.filter((l) => seen.has(l));
-    return permitted.sort((a, b) => a.localeCompare(b));
-  }, [records, allowedLocations, hasAllLocations]);
+  // Every location the loaded visits happened at — access is by person, so a
+  // salesperson's visits anywhere are included.
+  const locationOptions = useMemo(
+    () =>
+      [...new Set(records.map((record) => record.location).filter(Boolean))].sort((a, b) =>
+        a.localeCompare(b)
+      ),
+    [records]
+  );
+
+  // Fill in the names of the assigned salespeople: from their visits where
+  // loaded, otherwise from their profile (rules let an Admin read the
+  // profiles of the people assigned to them).
+  useEffect(() => {
+    if (hasAllSalespeople || allowedSalespeople.length === 0) return undefined;
+    let cancelled = false;
+    Promise.all(
+      allowedSalespeople.map(async (uid) => {
+        try {
+          const snap = await getDoc(doc(db, 'users', uid));
+          return [uid, snap.exists() ? snap.data()?.name || snap.data()?.email || '' : ''];
+        } catch {
+          return [uid, ''];
+        }
+      })
+    ).then((entries) => {
+      if (!cancelled) setAssignedNames(Object.fromEntries(entries));
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scopeKey]);
+
+  const assignedLabels = useMemo(() => {
+    const fromVisits = {};
+    records.forEach((record) => {
+      if (record.userId && !fromVisits[record.userId]) fromVisits[record.userId] = record.name || record.userEmail;
+    });
+    return allowedSalespeople
+      .map((uid) => ({ uid, label: assignedNames[uid] || fromVisits[uid] || `ID ${uid.slice(0, 6)}…` }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [allowedSalespeople, assignedNames, records]);
 
   const hasFilters = Boolean(search || person || location || attentionOnly);
   const clearFilters = () => {
@@ -655,8 +710,10 @@ const AdminDashboard = ({ allowedLocations = [], hasAllLocations = true, isSuper
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Team data</h1>
           <p className="text-sm text-slate-500">
-            {hasAllLocations ? 'Check-ins across all locations' : 'Check-ins for your locations'},{' '}
-            {rangeLabel}, newest first.
+            {hasAllSalespeople
+              ? 'Check-ins by every salesperson'
+              : 'Check-ins by the salespeople assigned to you, at any location'}
+            , {rangeLabel}, newest first.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -689,15 +746,29 @@ const AdminDashboard = ({ allowedLocations = [], hasAllLocations = true, isSuper
         <PermissionHelp />
       ) : (
         <>
-          {!hasAllLocations && (
+          {noneAssigned && (
+            <HelpCard icon={Users} title="No salespeople are assigned to you yet">
+              <p>
+                Admins see the visits of the salespeople assigned to them. Ask a SuperAdmin to
+                choose yours on the <strong>Roles</strong> screen; their visits will then appear
+                here.
+              </p>
+            </HelpCard>
+          )}
+
+          {!hasAllSalespeople && !noneAssigned && (
             <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-3 text-sm">
               <span className="inline-flex items-center gap-1.5 font-medium text-slate-700">
-                <MapPin className="h-3.5 w-3.5 text-brand-700" aria-hidden="true" />
-                Your access:
+                <Users className="h-3.5 w-3.5 text-brand-700" aria-hidden="true" />
+                Your salespeople:
               </span>
-              {allowedLocations.map((name) => (
-                <span key={name} className="rounded-md bg-brand-50 px-1.5 py-0.5 text-xs font-medium text-brand-800">
-                  {name}
+              {assignedLabels.map(({ uid, label }) => (
+                <span
+                  key={uid}
+                  title={`ID ${uid}`}
+                  className="rounded-md bg-brand-50 px-1.5 py-0.5 text-xs font-medium text-brand-800"
+                >
+                  {label}
                 </span>
               ))}
             </div>
@@ -823,7 +894,7 @@ const AdminDashboard = ({ allowedLocations = [], hasAllLocations = true, isSuper
                   Location
                 </label>
                 <select id="locationFilter" value={location} onChange={(e) => setLocation(e.target.value)} className="input">
-                  <option value="">{hasAllLocations ? 'All locations' : 'All my locations'}</option>
+                  <option value="">All locations</option>
                   {locationOptions.map((name) => (
                     <option key={name} value={name}>{name}</option>
                   ))}
