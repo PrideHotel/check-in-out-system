@@ -2,18 +2,18 @@ import { useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { getAuth, onAuthStateChanged, signOut } from 'firebase/auth';
 import { Loader2 } from 'lucide-react';
-import { doc, serverTimestamp, setDoc } from 'firebase/firestore';
-import { db } from './firebase.js';
 import CheckInOutForm from './components/CheckInOutForm';
 import Login from './components/Login';
 import History from './components/History';
 import AdminDashboard from './components/AdminDashboard';
-import UserManagement from './components/UserManagement';
+import ManagePage from './components/ManagePage';
 import Header from './components/Header';
 import { ToastProvider } from './components/ui/Toast';
 import { useToast } from './components/ui/toast-context';
 import { useAdminAccess } from './hooks/useAdminAccess';
 import UpdateBanner from './components/UpdateBanner';
+import { saveUserProfile } from './utils/profile';
+import { resetLocations } from './utils/locationStore';
 
 function SplashScreen() {
   return (
@@ -46,16 +46,14 @@ function AppShell() {
     checking: roleChecking,
   } = useAdminAccess(user);
 
-  // Keep each person's name and email in `users/{uid}`, so a SuperAdmin can
-  // pick salespeople by name when assigning them to an Admin. Best-effort:
-  // if it fails (say, the rules are not published yet) nothing else is affected.
+  // Keep each person's name and email on file; see saveUserProfile.
   useEffect(() => {
-    if (!user?.uid) return;
-    setDoc(
-      doc(db, 'users', user.uid),
-      { name: user.displayName || '', email: user.email || '', lastSeenAt: serverTimestamp() },
-      { merge: true }
-    ).catch((error) => console.warn('Could not save the user profile:', error));
+    saveUserProfile(user);
+  }, [user]);
+
+  // The locations list is read once per sign-in; start afresh for the next person.
+  useEffect(() => {
+    if (!user) resetLocations();
   }, [user]);
 
   // Keep the session across reloads instead of dropping back to the login screen.
@@ -118,7 +116,7 @@ function AppShell() {
               roleChecking ? (
                 <SplashScreen />
               ) : isSuperAdmin ? (
-                <UserManagement user={user} />
+                <ManagePage user={user} />
               ) : (
                 <Navigate to="/" replace />
               )

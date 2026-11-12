@@ -8,7 +8,7 @@ const BASE_NAV_ITEMS = [
 ];
 
 const ADMIN_NAV_ITEM = { to: '/admin', label: 'Team Data', icon: Users };
-const SUPERADMIN_NAV_ITEM = { to: '/users', label: 'Roles', icon: ShieldCheck };
+const SUPERADMIN_NAV_ITEM = { to: '/users', label: 'Manage', icon: ShieldCheck };
 
 function getInitials(user) {
   const source = user?.displayName || user?.email || '';
