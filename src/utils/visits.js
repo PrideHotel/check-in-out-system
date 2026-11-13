@@ -6,7 +6,7 @@
 // helper here prefers the Timestamp and falls back to the string.
 
 import { formatDuration, parseFormattedDateTime } from './datetime';
-import { LOCATION_COORDS } from '../constants/locations';
+import { getLocationCoords } from './locationStore';
 
 /** A visit still open after this long is treated as a forgotten check-out. */
 export const FORGOTTEN_AFTER_HOURS = 10;
@@ -102,7 +102,7 @@ export function distanceKm(a, b) {
  * location has no reference position).
  */
 export function readingDistanceKm(record, coords) {
-  const reference = LOCATION_COORDS[record?.location];
+  const reference = getLocationCoords(record?.location);
   if (!reference || !coords) return null;
   if (typeof coords.lat !== 'number' || typeof coords.lng !== 'number') return null;
   if (typeof coords.accuracy === 'number' && coords.accuracy > MAX_TRUSTED_ACCURACY_M) return null;
@@ -114,7 +114,7 @@ export function readingDistanceKm(record, coords) {
  * outside the location's radius. Returns `{ km, radiusKm }` or null.
  */
 export function farFromLocation(record) {
-  const reference = LOCATION_COORDS[record?.location];
+  const reference = getLocationCoords(record?.location);
   if (!reference) return null;
 
   const distances = [record.checkInCoords, record.checkOutCoords]

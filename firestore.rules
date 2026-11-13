@@ -71,16 +71,53 @@ service cloud.firestore {
         );
     }
 
-    // Keep in step with src/constants/locations.js. A visit must be logged
-    // against one of these, so free text can never reach the database and
-    // reports always group cleanly by location.
+    function locationPath(name) {
+      return /databases/$(database)/documents/locations/$(name);
+    }
+
+    // A visit must be logged against a real location, so free text can never
+    // reach the database and reports always group cleanly by location.
+    //
+    // Locations come from two places. The built-in list below (keep it in step
+    // with src/constants/locations.js) works with no setup. A SuperAdmin can
+    // add to it, or hide an entry, from the app: that writes a document in
+    // `locations`, which takes priority over the built-in list.
     function isKnownLocation(location) {
+      return isValidLocationName(location)
+        && (
+          exists(locationPath(location))
+            ? get(locationPath(location)).data.get('active', true) == true
+            : isBuiltInLocation(location)
+        );
+    }
+
+    function isBuiltInLocation(location) {
       return location in [
         'Alkapuri', 'Ambaji', 'Becharaji', 'Bharuch', 'Bhopal', 'Canopus',
         'Daman', 'Dehradun', 'Deoghar', 'Digha', 'Dwarka', 'Goa', 'Haldwani', 'Haridwar',
         'Indore', 'Jaipur', 'Manjusar', 'Mussoorie', 'Phaltan', 'Puri',
         'Rajkot', 'Ranakpur', 'Udaipur'
       ];
+    }
+
+    // Letters, digits, spaces and . & ( ) - only, 1-40 characters, no leading or
+    // trailing space. Keep in step with LOCATION_NAME_PATTERN in
+    // src/utils/locationStore.js.
+    function isValidLocationName(name) {
+      return name is string
+        && name.size() <= 40
+        && name.matches('[A-Za-z0-9][-A-Za-z0-9 .&()]*')
+        && !name.matches('.* ');
+    }
+
+    function isValidLocationDoc() {
+      let incoming = request.resource.data;
+      return incoming.keys().hasOnly(['active', 'lat', 'lng', 'radiusKm', 'updatedAt'])
+        && incoming.active is bool
+        && (!('lat' in incoming) || (incoming.lat is number && incoming.lat >= -90 && incoming.lat <= 90))
+        && (!('lng' in incoming) || (incoming.lng is number && incoming.lng >= -180 && incoming.lng <= 180))
+        && (!('radiusKm' in incoming)
+            || (incoming.radiusKm is number && incoming.radiusKm > 0 && incoming.radiusKm <= 1000));
     }
 
     // How long a visit may stay open before a manager may close it for the
@@ -251,6 +288,25 @@ service cloud.firestore {
         && request.resource.data.get('name', '') is string
         && request.resource.data.get('email', '') == request.auth.token.get('email', '')
         && request.resource.data.lastSeenAt == request.time;
+      allow delete: if false;
+    }
+
+    // Locations added, adjusted or hidden from the app; see isKnownLocation.
+    match /locations/{name} {
+      allow read: if isSignedIn();
+      allow create, update: if isSuperAdmin() && isValidLocationName(name) && isValidLocationDoc();
+      allow delete: if isSuperAdmin();
+    }
+
+    // Each salesperson's own list of company names, used to suggest spellings
+    // they have used before. Private to them.
+    match /companies/{uid} {
+      allow get: if isSignedIn() && request.auth.uid == uid;
+      allow create, update: if isSignedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['names', 'updatedAt'])
+        && request.resource.data.names is list
+        && request.resource.data.names.size() <= 5000
+        && request.resource.data.updatedAt == request.time;
       allow delete: if false;
     }
 

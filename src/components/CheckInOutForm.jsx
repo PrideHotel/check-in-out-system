@@ -30,7 +30,15 @@ import {
 } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import { useToast } from './ui/toast-context';
-import { LOCATIONS } from '../constants/locations';
+import SuggestInput from './ui/SuggestInput';
+import { useLocations } from '../utils/locationStore';
+import {
+  cleanCompanyName,
+  loadCompanyNames,
+  matchCompany,
+  rememberCompany,
+  suggestCompanies,
+} from '../utils/companies';
 import { getFormattedDateTime, formatStopwatch, shortenAddress } from '../utils/datetime';
 import {
   CLOCK_SKEW_ALERT_MINUTES,
@@ -70,13 +78,17 @@ async function reverseGeocode(lat, lng) {
   }
 }
 
-/** A fresh, high-accuracy GPS reading as `{ lat, lng, accuracy }`. */
-function readDevicePosition() {
+const PERMISSION_DENIED = 1; // GeolocationPositionError.PERMISSION_DENIED
+
+const LOCATION_BLOCKED_MESSAGE =
+  'This site is not allowed to use your location. Tap the lock icon next to the web address, ' +
+  'set Location to "Allow", then try again.';
+const LOCATION_UNAVAILABLE_MESSAGE =
+  'Could not get your location. Check that Location (GPS) is switched on, ' +
+  'move near a window or step outside, then try again.';
+
+function askForPosition(options) {
   return new Promise((resolve, reject) => {
-    if (!navigator.geolocation) {
-      reject(new Error('Geolocation is not supported by this browser.'));
-      return;
-    }
     navigator.geolocation.getCurrentPosition(
       ({ coords }) =>
         resolve({
@@ -84,13 +96,39 @@ function readDevicePosition() {
           lng: coords.longitude,
           accuracy: Math.round(coords.accuracy),
         }),
-      (error) => {
-        console.error('Error getting location:', error);
-        reject(new Error('Location access is required. Please allow location and try again.'));
-      },
-      { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
+      reject,
+      options
     );
   });
+}
+
+/**
+ * The device's position as `{ lat, lng, accuracy }`.
+ *
+ * A precise GPS fix is tried first. Indoors that often times out, so a second,
+ * quicker attempt accepts a network-based position (Wi-Fi / mobile towers) —
+ * less exact, but its accuracy is stored with it and a vague reading is never
+ * used to flag a visit. Only a refused permission fails straight away, with
+ * instructions that match the actual problem.
+ */
+async function readDevicePosition() {
+  if (!navigator.geolocation) {
+    throw new Error('This browser cannot share your location. Please use Chrome or Safari.');
+  }
+  try {
+    return await askForPosition({ enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
+  } catch (error) {
+    if (error?.code === PERMISSION_DENIED) throw new Error(LOCATION_BLOCKED_MESSAGE);
+    console.warn('Precise location failed; trying a network-based position.', error);
+  }
+  try {
+    return await askForPosition({ enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 });
+  } catch (error) {
+    console.error('Error getting location:', error);
+    throw new Error(
+      error?.code === PERMISSION_DENIED ? LOCATION_BLOCKED_MESSAGE : LOCATION_UNAVAILABLE_MESSAGE
+    );
+  }
 }
 
 async function capturePosition() {
@@ -148,8 +186,25 @@ const CheckInOutForm = () => {
   const locationStateRef = useRef({ typed: '', selected: '' });
   locationStateRef.current = { typed: searchQuery, selected: formData.location };
 
-  // A location only counts if it is one of the listed properties.
+  // Locations come from the built-in list plus any a SuperAdmin has added or
+  // hidden. A location only counts if it is on that list.
+  const { names: LOCATIONS } = useLocations();
+  const locationsRef = useRef(LOCATIONS);
+  locationsRef.current = LOCATIONS;
   const hasValidLocation = LOCATIONS.includes(formData.location);
+
+  // Company names this person has used before, offered while typing.
+  const [companyNames, setCompanyNames] = useState([]);
+  const uid = auth.currentUser?.uid;
+  useEffect(() => {
+    let cancelled = false;
+    loadCompanyNames(uid).then((names) => {
+      if (!cancelled) setCompanyNames(names);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [uid]);
 
   const filteredLocations = useMemo(() => {
     // Reopening the list after a pick shows every option, not just the one
@@ -158,7 +213,7 @@ const CheckInOutForm = () => {
     return LOCATIONS.filter((location) =>
       location.toLowerCase().includes(searchQuery.trim().toLowerCase())
     );
-  }, [searchQuery, formData.location]);
+  }, [searchQuery, formData.location, LOCATIONS]);
 
   const checkExistingCheckIn = useCallback(async () => {
     if (!auth.currentUser) {
@@ -221,7 +276,7 @@ const CheckInOutForm = () => {
   // discarded and the field goes back to the last real selection.
   const commitLocationInput = useCallback(() => {
     const { typed, selected } = locationStateRef.current;
-    const exact = LOCATIONS.find(
+    const exact = locationsRef.current.find(
       (location) => location.toLowerCase() === typed.trim().toLowerCase()
     );
 
@@ -271,11 +326,6 @@ const CheckInOutForm = () => {
     setActiveIndex(0);
   };
 
-  const handleInputChange = (e) => {
-    const { name, value } = e.target;
-    setFormData((prev) => ({ ...prev, [name]: value }));
-  };
-
   const handleLocationKeyDown = (event) => {
     if (event.key === 'Escape') {
       commitLocationInput();
@@ -314,8 +364,12 @@ const CheckInOutForm = () => {
       });
       return;
     }
-    const companyName = formData.companyName.trim();
-    if (!formData.name || !companyName) {
+    // A company visited before keeps the spelling already on file, so one
+    // client never appears under two slightly different names.
+    const typedCompany = cleanCompanyName(formData.companyName);
+    const companyName = matchCompany(companyNames, typedCompany) ?? typedCompany;
+    const salesperson = formData.name || auth.currentUser?.displayName || '';
+    if (!salesperson || !companyName) {
       toast.error('Fill in your location and the company name before checking in.', {
         title: 'Missing details',
       });
@@ -356,7 +410,7 @@ const CheckInOutForm = () => {
         }
 
         transaction.set(recordRef, {
-          name: formData.name,
+          name: salesperson,
           location: formData.location,
           companyName,
           userId: uid,
@@ -379,6 +433,13 @@ const CheckInOutForm = () => {
       setFormData({ ...EMPTY_FORM, ...saved });
       setIsCheckedIn(true);
       toast.success(`Visit at ${companyName} started.`, { title: 'Checked in' });
+
+      // Remember the name for next time. Separate from the check-in itself,
+      // so a failure here can never undo or block a visit.
+      if (!matchCompany(companyNames, companyName)) {
+        setCompanyNames((names) => [...names, companyName]);
+        rememberCompany(uid, companyName);
+      }
 
       const skew = clockSkewMinutes(saved);
       if (skew !== null && Math.abs(skew) >= CLOCK_SKEW_ALERT_MINUTES) {
@@ -781,17 +842,23 @@ const CheckInOutForm = () => {
             </label>
             <div className="relative">
               <Building2 className="field-icon" aria-hidden="true" />
-              <input
+              <SuggestInput
                 id="companyName"
-                type="text"
                 name="companyName"
                 value={formData.companyName}
-                onChange={handleInputChange}
+                onChange={(value) => setFormData((prev) => ({ ...prev, companyName: value }))}
+                getSuggestions={(text) => suggestCompanies(companyNames, text)}
                 disabled={isCheckedIn || isBusy}
                 className="input input-icon"
                 placeholder="Company you are visiting"
+                hint="Companies you have visited"
               />
             </div>
+            {!isCheckedIn && companyNames.length > 0 && (
+              <p className="mt-1.5 text-xs text-slate-500">
+                Start typing and pick from your earlier visits to keep the spelling the same.
+              </p>
+            )}
           </div>
 
           {/* Times */}

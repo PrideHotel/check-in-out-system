@@ -281,6 +281,44 @@ await check('check-in with empty location', 'deny', () =>
 await check('check-in with no location field', 'deny', () =>
   checkIn(sunil, 'uid_sunil', 'loc_missing', { omit: ['location'] }));
 
+// ---- locations managed from the app -----------------------------------------
+section = 'managed locations';
+const loc = (db, name, data = {}) =>
+  setDoc(doc(db, 'locations', name), { active: true, updatedAt: serverTimestamp(), ...data });
+await check('SuperAdmin adds a new location with coordinates', 'allow', () =>
+  loc(superAdmin, 'Nashik', { lat: 19.9975, lng: 73.7898, radiusKm: 40 }));
+await check('check-in at the newly added location', 'allow', () =>
+  checkIn(as('uid_loc4', 'd@pridehotel.com'), 'uid_loc4', 'loc_nashik', { visit: { location: 'Nashik' } }));
+await check('salesperson reads the locations list', 'allow', () => getDocs(collection(priya, 'locations')));
+await check('anonymous reads the locations list', 'deny', () => getDocs(collection(anon, 'locations')));
+await check('SuperAdmin hides a built-in location (Puri)', 'allow', () => loc(superAdmin, 'Puri', { active: false }));
+await check('check-in at a hidden location', 'deny', () =>
+  checkIn(as('uid_loc5', 'e@pridehotel.com'), 'uid_loc5', 'loc_puri', { visit: { location: 'Puri' } }));
+await check('SuperAdmin shows it again', 'allow', () => loc(superAdmin, 'Puri', { active: true }));
+await check('check-in there works again', 'allow', () =>
+  checkIn(as('uid_loc5', 'e@pridehotel.com'), 'uid_loc5', 'loc_puri2', { visit: { location: 'Puri' } }));
+await check('SuperAdmin deletes an added location', 'allow', () => deleteDoc(doc(superAdmin, 'locations/Nashik')));
+await check('check-in at the deleted location', 'deny', () =>
+  checkIn(as('uid_loc6', 'f@pridehotel.com'), 'uid_loc6', 'loc_gone', { visit: { location: 'Nashik' } }));
+await check('plain admin adds a location', 'deny', () => loc(allPeopleAdmin, 'Surat'));
+await check('salesperson adds a location', 'deny', () => loc(priya, 'Surat'));
+await check('location with impossible coordinates', 'deny', () => loc(superAdmin, 'Surat', { lat: 500, lng: 72 }));
+await check('location with an extra field', 'deny', () => loc(superAdmin, 'Surat', { owner: 'me' }));
+await check('location name with a trailing space', 'deny', () => loc(superAdmin, 'Surat '));
+await check('location name with odd characters', 'deny', () => loc(superAdmin, 'Surat<script>'));
+
+// ---- remembered company names ------------------------------------------------
+section = 'company name list';
+const companies = (db, uid, data = {}) =>
+  setDoc(doc(db, 'companies', uid), { names: ['Blue Orchid Events'], updatedAt: serverTimestamp(), ...data });
+await check('saving your own company list', 'allow', () => companies(priya, 'uid_priya'));
+await check('reading your own company list', 'allow', () => getDoc(doc(priya, 'companies/uid_priya')));
+await check("reading a colleague's company list", 'deny', () => getDoc(doc(rajul, 'companies/uid_priya')));
+await check("an Admin reading a salesperson's company list", 'deny', () => getDoc(doc(teamLead, 'companies/uid_priya')));
+await check("writing a colleague's company list", 'deny', () => companies(rajul, 'uid_priya'));
+await check('company list that is not a list', 'deny', () => companies(priya, 'uid_priya', { names: 'x' }));
+await check('company list with an extra field', 'deny', () => companies(priya, 'uid_priya', { role: 'admin' }));
+
 // ---- check-out -------------------------------------------------------------
 section = 'check-out';
 await check('check-out stamping a backdated time', 'deny', () =>

@@ -120,9 +120,9 @@ There are three levels, all keyed off the signed-in email address:
 |---|---|---|
 | Salesperson (no role document) | Only their own visits, on **History** | No |
 | **Admin** | **Team Data** for the salespeople assigned to them — every visit, at any location | No |
-| **SuperAdmin** | **Team Data** for everyone | Yes — the **Roles** screen |
+| **SuperAdmin** | **Team Data** for everyone | Yes — the **Manage** screen |
 
-**Access is by person, not location.** On the **Roles** screen a SuperAdmin
+**Access is by person, not location.** On the **Manage → Roles & access** screen a SuperAdmin
 picks an Admin's salespeople by name (searchable by name, email or ID), or
 chooses **All salespeople**. The Admin then sees all of those people's visits,
 wherever they happen.
@@ -162,7 +162,7 @@ inside the app:
    `admins` → document ID `mis3@pridehotel.com`, with a field `role` (string)
    set to `superadmin`.
 
-From then on, a SuperAdmin adds and edits everyone else on the **Roles** screen.
+From then on, a SuperAdmin adds and edits everyone else on the **Manage** screen.
 
 ### How access is enforced
 
@@ -196,11 +196,31 @@ next check-in.
 **GPS is always kept.** `checkInCoords` / `checkOutCoords` hold
 `{ lat, lng, accuracy }`. The address is looked up from the public Nominatim
 service, with an 8-second timeout; if that fails the address is left blank and
-the coordinates are still there, with a map link in Team Data. Location
-reference points and radii are in `LOCATION_COORDS`
-(`src/constants/locations.js`). They are approximate city centres with a
-generous radius, since salespeople visit clients across the city. A location
-set to `null` is never distance-flagged.
+the coordinates are still there, with a map link in Team Data.
+
+A precise GPS fix is tried first (15 seconds). If that times out — common
+indoors — a quicker network-based position (Wi-Fi / mobile towers) is accepted
+instead; its accuracy is stored, and a reading vaguer than 2 km is never used
+to flag a visit. A refused permission and "no signal" give different messages,
+each saying what to do.
+
+**Locations.** The built-in list and its reference points are in
+`src/constants/locations.js` (approximate city centres with a generous radius,
+since salespeople visit clients across the city). A SuperAdmin can add a
+location, set or move its reference point, hide it or delete it on
+**Manage → Locations** — no code change or release needed. Those changes are
+documents in the `locations` collection (`{ active, lat?, lng?, radiusKm? }`,
+ID = the name) and take priority over the built-in entry of the same name; the
+rules check a new visit against the same combination. A name cannot be
+renamed, because past visits carry it: hide the old one and add a new one. A
+location with no reference point is never distance-flagged.
+
+**Company names.** While typing the company, the salesperson is offered names
+from their own earlier visits, and a name typed with different capitals,
+spacing or full stops is saved in the spelling already on file. New names can
+always be typed. The list is each person's own (`companies/{uid}`, built from
+their past visits the first time) and is not shared, because anyone can create
+an account.
 
 **Forgotten check-outs.** After 10 hours the check-in screen asks whether the
 person forgot. They can check out now, or say when they actually left: that is
@@ -288,12 +308,18 @@ src/
     CheckInOutForm.jsx       check-in & check-out screen
     History.jsx              the signed-in user's own visits
     AdminDashboard.jsx       visits of your assigned salespeople, filters, Excel export
-    UserManagement.jsx       SuperAdmin screen: roles and which salespeople each Admin sees
+    ManagePage.jsx           SuperAdmin screen with two tabs: roles, locations
+    UserManagement.jsx       roles and which salespeople each Admin sees
+    LocationManagement.jsx   add, edit, hide or delete locations
     UpdateBanner.jsx         "new version available — refresh" bar for stale tabs
     ui/Toast.jsx             toast notification provider
     ui/toast-context.js      toast context + `useToast` hook
+    ui/SuggestInput.jsx      free-text field with suggestions (company name)
   hooks/useAdminAccess.js    resolves the user's role and assigned salespeople
-  constants/locations.js     the property list shared by check-in and permissions
+  constants/locations.js     the built-in location list (also in firestore.rules)
+  utils/locationStore.js     built-in list merged with locations managed in the app
+  utils/companies.js         each person's remembered company names
+  utils/profile.js           saves the `users/{uid}` name/email profile
   utils/datetime.js          shared date/time formatting helpers
   utils/visits.js            reading a visit: times, duration, flags, distance
   utils/excel.js             Excel (.xlsx) building and download

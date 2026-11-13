@@ -57,6 +57,7 @@ import {
   visitStart,
   visitStatus,
 } from '../utils/visits';
+import { useLocations } from '../utils/locationStore';
 import { downloadExcel, exportStamp } from '../utils/excel';
 import { useToast } from './ui/toast-context';
 
@@ -486,13 +487,16 @@ const AdminDashboard = ({
   };
 
   const now = Date.now();
+  const locations = useLocations();
   const flagsById = useMemo(() => {
     const map = new Map();
     records.forEach((record) => map.set(record.id, visitFlags(record, now)));
     return map;
-    // Recompute when the data changes; the clock ticking does not matter here.
+    // Recompute when the data changes, or when the locations' reference points
+    // arrive (the distance flag depends on them); the clock ticking does not
+    // matter here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [records]);
+  }, [records, locations]);
 
   const people = useMemo(() => {
     const names = new Set();

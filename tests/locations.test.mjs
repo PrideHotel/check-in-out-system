@@ -22,7 +22,7 @@ function check(name, ok, detail = '') {
 }
 
 // The location list the rules enforce on every new check-in.
-const block = rules.match(/function isKnownLocation[\s\S]*?\[([\s\S]*?)\]/)?.[1] ?? '';
+const block = rules.match(/function isBuiltInLocation[\s\S]*?\[([\s\S]*?)\]/)?.[1] ?? '';
 const rulesLocations = [...block.matchAll(/'([^']+)'/g)].map((match) => match[1]);
 
 check(

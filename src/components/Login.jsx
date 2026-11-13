@@ -26,6 +26,7 @@ import {
   User,
   UserPlus,
 } from 'lucide-react';
+import { saveUserProfile } from '../utils/profile';
 
 // Firebase error codes -> messages a salesperson can actually act on.
 const ERROR_MESSAGES = {
@@ -156,7 +157,10 @@ const Login = () => {
         await signInWithEmailAndPassword(auth, email, password);
       } else {
         const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-        await updateProfile(userCredential.user, { displayName });
+        await updateProfile(userCredential.user, { displayName: displayName.trim() });
+        // The app saves a profile as soon as the account exists, which is
+        // before the name above is set — so save it again now, with the name.
+        await saveUserProfile(userCredential.user, displayName);
       }
       navigate('/');
     } catch (err) {
